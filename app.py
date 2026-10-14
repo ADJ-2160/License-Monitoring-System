@@ -150,16 +150,10 @@ async def get_server_requests(
 
 @app.get("/api/v1/license/anomalies")
 async def get_license_anomalies(
-    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-    date: Optional[str] = Query(None, description="Target date (YYYY-MM-DD)"),
     dept_name: Optional[str] = Query(None, description="Department filter"),
     search: Optional[str] = Query(None, description="Search keyword")
 ):
     data = anomaly_service.get_idle_anomalies(
-        start_date=start_date,
-        end_date=end_date,
-        single_date=date,
         department=dept_name,
         search_keyword=search
     )

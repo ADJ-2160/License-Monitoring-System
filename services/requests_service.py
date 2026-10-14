@@ -70,7 +70,6 @@ class RequestsService:
         end_date: Optional[str] = None,
         single_date: Optional[str] = None
     ) -> Dict[str, Any]:
-        user_master = user_master_service.get_user_master()
         dates_ymd = log_parser_service.resolve_date_range(start_date, end_date, single_date)
         
         # Requests history is strictly limited to past dates (up to yesterday / prior to today)
@@ -162,10 +161,10 @@ class RequestsService:
                 if ev["sec"] - cur_cluster[-1]["sec"] <= 300:
                     cur_cluster.append(ev)
                 else:
-                    items.append(self._build_session_record(cur_cluster, user_master, host_user_cache, host_ip_map))
+                    items.append(self._build_session_record(cur_cluster, host_user_cache, host_ip_map))
                     cur_cluster = [ev]
             if cur_cluster:
-                items.append(self._build_session_record(cur_cluster, user_master, host_user_cache, host_ip_map))
+                items.append(self._build_session_record(cur_cluster, host_user_cache, host_ip_map))
 
         for it in items:
             dates_with_requests.add(it["date"])
@@ -178,7 +177,7 @@ class RequestsService:
         raw_items = []
         for ev_list in raw_events_by_date_host.values():
             for ev in ev_list:
-                raw_items.append(self._build_session_record([ev], user_master, host_user_cache, host_ip_map))
+                raw_items.append(self._build_session_record([ev], host_user_cache, host_ip_map))
         raw_items.sort(key=lambda x: (x["date_ymd"], x["raw_time"]))
 
         deduped_count = max(0, raw_count - len(items))
@@ -322,7 +321,6 @@ class RequestsService:
     def _build_session_record(
         self,
         cluster: List[Dict[str, Any]],
-        user_master: Dict[str, Any],
         host_info_cache: Optional[Dict[str, Any]] = None,
         host_ip_map: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:

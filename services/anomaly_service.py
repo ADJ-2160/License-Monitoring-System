@@ -29,11 +29,7 @@ class AnomalyService:
     def get_idle_anomalies(
         self,
         department: Optional[str] = None,
-        search_keyword: Optional[str] = None,
-        # Optional backward compatibility args
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        single_date: Optional[str] = None
+        search_keyword: Optional[str] = None
     ) -> Dict[str, Any]:
         dept_filter = department or ""
         kw_filter = (search_keyword or "").strip().lower()

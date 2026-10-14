@@ -65,6 +65,4 @@ LUNCH_HOURS_SLOTS_15M = ["12:15", "12:30", "12:45"]
 
 # Cache TTL Settings (in seconds)
 CACHE_TTL_REALTIME = 10       # 10 seconds for real-time status
-CACHE_TTL_PROCTRACE = 15      # 15 seconds for proc trace anomaly monitoring
 CACHE_TTL_STATS = 600         # 10 minutes for multi-date stats & pivots
-CACHE_TTL_USER_MASTER = 3600  # 1 hour for user master data
