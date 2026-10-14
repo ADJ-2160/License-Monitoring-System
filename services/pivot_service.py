@@ -158,7 +158,7 @@ class PivotService:
                         "USED_SLOTS_COUNT": day_slots_count,
                         "HOURS_OCCUPIED": day_hours,
                         "TOTAL_HOURS": day_hours,
-                        "OCCUPANCY_RATE": round((day_slots_count / len(WORK_HOURS_SLOTS_15M)) * 100, 1),
+                        "OCCUPANCY_RATE": round((len(day_slots) / len(WORK_HOURS_SLOTS_15M)) * 100, 1),
                         "FIRST_SEEN": hinfo["min_times"].get(d_val, "-"),
                         "LAST_SEEN": hinfo["max_times"].get(d_val, "-"),
                         "SLOTS": slot_map_day

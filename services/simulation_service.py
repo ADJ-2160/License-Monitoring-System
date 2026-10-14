@@ -104,8 +104,12 @@ class SimulationService:
         if cached:
             return cached
 
-        time_stats = stats_service.get_multi_date_time_stats(start_date, end_date, single_date)
-        req_stats = requests_service.get_server_requests(start_date, end_date, single_date)
+        time_stats = stats_service.get_multi_date_time_stats(
+            start_date=dates_iso[0], end_date=dates_iso[-1], single_date=None
+        )
+        req_stats = requests_service.get_server_requests(
+            start_date=dates_iso[0], end_date=dates_iso[-1], single_date=None
+        )
 
         day_logs = log_parser_service.get_day_log_data(dates_ymd)
 

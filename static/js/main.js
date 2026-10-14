@@ -2251,6 +2251,8 @@ const RequestsModule = {
     dateController: null,
     rawData: null,
     chart: null,
+    deptChart: null,
+    currentDeptMode: 'top6',
 
     init() {
         const maxPastDate = App.getMaxAllowedPastDate();
@@ -2266,7 +2268,27 @@ const RequestsModule = {
         );
 
         document.getElementById('btnSearchRequests')?.addEventListener('click', () => this.search());
+        this.initDeptToggles();
         this.initExports();
+    },
+
+    initDeptToggles() {
+        const top6Btn = document.getElementById('btnReqDeptModeTop6');
+        const allBtn = document.getElementById('btnReqDeptModeAll');
+        if (top6Btn && allBtn) {
+            top6Btn.addEventListener('click', () => {
+                top6Btn.classList.add('active');
+                allBtn.classList.remove('active');
+                this.currentDeptMode = 'top6';
+                if (this.rawData) this.renderDeptChart();
+            });
+            allBtn.addEventListener('click', () => {
+                allBtn.classList.add('active');
+                top6Btn.classList.remove('active');
+                this.currentDeptMode = 'all';
+                if (this.rawData) this.renderDeptChart();
+            });
+        }
     },
 
     initExports() {
@@ -2339,6 +2361,8 @@ const RequestsModule = {
         if (!this.rawData) return;
         this.renderKpis();
         this.renderChart();
+        this.renderDeptChart();
+        this.renderInsights();
         this.renderTable();
     },
 
@@ -2496,6 +2520,288 @@ const RequestsModule = {
                 }
             }
         });
+    },
+
+    renderDeptChart() {
+        const canvas = document.getElementById('reqDeptPieChart');
+        const legendWrapper = document.getElementById('reqDeptLegendWrapper');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        if (this.deptChart) {
+            this.deptChart.destroy();
+            this.deptChart = null;
+        }
+
+        let deptDist = this.rawData?.dept_distribution || [];
+        if (deptDist.length === 0 && Array.isArray(this.rawData?.items) && this.rawData.items.length > 0) {
+            const deptMap = {};
+            this.rawData.items.forEach(it => {
+                const dName = it.dept_name || '미등록';
+                const uKey = it.user_key || it.user_name || it.hostname || '-';
+                const retryCnt = it.retry_count || 1;
+                if (!deptMap[dName]) {
+                    deptMap[dName] = { dept_name: dName, count: 0, raw_requests: 0, userMap: {} };
+                }
+                deptMap[dName].count += 1;
+                deptMap[dName].raw_requests += retryCnt;
+                if (!deptMap[dName].userMap[uKey]) {
+                    deptMap[dName].userMap[uKey] = {
+                        user_name: it.user_name || '-',
+                        emp_no: it.emp_no || '-',
+                        hostname: it.hostname || '-',
+                        count: 0,
+                        raw_requests: 0
+                    };
+                }
+                deptMap[dName].userMap[uKey].count += 1;
+                deptMap[dName].userMap[uKey].raw_requests += retryCnt;
+            });
+            const totalItems = this.rawData.items.length;
+            deptDist = Object.values(deptMap)
+                .sort((a, b) => b.count - a.count)
+                .map(d => {
+                    const uList = Object.values(d.userMap).sort((a, b) => (b.count - a.count) || (b.raw_requests - a.raw_requests));
+                    return {
+                        dept_name: d.dept_name,
+                        share_pct: totalItems > 0 ? Number(((d.count / totalItems) * 100).toFixed(1)) : 0.0,
+                        count: d.count,
+                        raw_requests: d.raw_requests,
+                        user_count: uList.length,
+                        users: uList
+                    };
+                });
+        }
+
+        if (deptDist.length === 0) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (legendWrapper) legendWrapper.innerHTML = '<div class="text-muted text-xs p-3">초과 요청(Denial) 발생 부서 없음</div>';
+            return;
+        }
+
+        let labels = [];
+        let dataVals = [];
+        let bgColors = [];
+        let legendItems = [];
+
+        const totalDenials = deptDist.reduce((acc, cur) => acc + cur.count, 0);
+
+        if (this.currentDeptMode === 'all') {
+            labels = deptDist.map(d => `${d.dept_name} (${d.user_count || 0}명)`);
+            dataVals = deptDist.map(d => d.count);
+            bgColors = deptDist.map((_, i) => {
+                const hue = Math.round((i * 137.508) % 360);
+                return `hsl(${hue}, 70%, 48%)`;
+            });
+
+            legendItems = deptDist.map((d, i) => {
+                const pct = totalDenials > 0 ? ((d.count / totalDenials) * 100).toFixed(1) : '0.0';
+                const uCount = d.user_count || 0;
+                return {
+                    index: i,
+                    name: `${d.dept_name} (${uCount}명)`,
+                    count: d.count,
+                    rawRequests: d.raw_requests || d.count,
+                    userCount: uCount,
+                    users: d.users || [],
+                    pct: pct,
+                    color: bgColors[i]
+                };
+            });
+        } else {
+            const topDepts = deptDist.slice(0, 6);
+            const others = deptDist.slice(6);
+            const otherCount = others.reduce((acc, cur) => acc + cur.count, 0);
+            const otherRawRequests = others.reduce((acc, cur) => acc + (cur.raw_requests || cur.count), 0);
+            const otherUserCount = others.reduce((acc, cur) => acc + (cur.user_count || 0), 0);
+
+            labels = topDepts.map(d => `${d.dept_name} (${d.user_count || 0}명)`);
+            dataVals = topDepts.map(d => d.count);
+
+            const defaultPalette = [
+                '#2563eb', '#0284c7', '#0d9488', '#16a34a', '#d97706', '#dc2626', '#64748b'
+            ];
+
+            if (otherCount > 0) {
+                labels.push(`기타 부서 (${otherUserCount}명)`);
+                dataVals.push(otherCount);
+            }
+
+            bgColors = defaultPalette.slice(0, labels.length);
+
+            legendItems = topDepts.map((d, i) => {
+                const pct = totalDenials > 0 ? ((d.count / totalDenials) * 100).toFixed(1) : '0.0';
+                const uCount = d.user_count || 0;
+                return {
+                    index: i,
+                    name: `${d.dept_name} (${uCount}명)`,
+                    count: d.count,
+                    rawRequests: d.raw_requests || d.count,
+                    userCount: uCount,
+                    users: d.users || [],
+                    pct: pct,
+                    color: bgColors[i]
+                };
+            });
+
+            if (otherCount > 0) {
+                const otherPct = totalDenials > 0 ? ((otherCount / totalDenials) * 100).toFixed(1) : '0.0';
+                const otherUsers = others.flatMap(d => (d.users || []).map(u => ({
+                    ...u,
+                    dept_name: d.dept_name
+                }))).sort((a, b) => (b.count || 0) - (a.count || 0));
+                legendItems.push({
+                    index: labels.length - 1,
+                    name: `기타 부서 (${otherUserCount}명)`,
+                    count: otherCount,
+                    rawRequests: otherRawRequests,
+                    userCount: otherUserCount,
+                    users: otherUsers,
+                    pct: otherPct,
+                    color: bgColors[labels.length - 1]
+                });
+            }
+        }
+
+        if (legendWrapper) {
+            legendWrapper.innerHTML = `
+                <ul class="dept-legend-list" style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;">
+                    ${legendItems.map(item => {
+                        const userRowsHtml = (item.users && item.users.length > 0)
+                            ? item.users.map((u, uIdx) => {
+                                const subMeta = [
+                                    u.dept_name,
+                                    (u.emp_no && u.emp_no !== '-' ? u.emp_no : null),
+                                    u.hostname
+                                ].filter(Boolean).join(' · ');
+                                const uCnt = Number(u.count || 0);
+                                const uRaw = Number(u.raw_requests || uCnt);
+                                const uMetricText = uRaw > uCnt ? `${uCnt}건 (${uRaw}회)` : `${uCnt}건`;
+                                return `
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; padding:2px 0; border-bottom:1px dashed rgba(128,128,128,0.15); text-align:left;">
+                                        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${Utils.escapeHtml(u.user_name)} (${Utils.escapeHtml(subMeta)})">
+                                            <strong style="font-weight:600;">${uIdx + 1}. ${Utils.escapeHtml(u.user_name)}</strong>
+                                            <span style="opacity:0.75; font-size:10px; margin-left:3px;">(${Utils.escapeHtml(subMeta)})</span>
+                                        </span>
+                                        <span style="white-space:nowrap; font-family:monospace; font-size:10.5px; opacity:0.85; flex-shrink:0;">${uMetricText}</span>
+                                    </div>
+                                `;
+                            }).join('')
+                            : '<div style="opacity:0.6; font-size:10.5px; padding:2px 0; text-align:left;">조회된 사용자 내역 없음</div>';
+
+                        return `
+                            <li class="dept-legend-item" data-dept-idx="${item.index}" title="${Utils.escapeHtml(item.name)}: 초과 요청 ${item.count}건 / 총 시도 ${item.rawRequests}회 (${item.pct}%)" style="display:flex; align-items:center; cursor:pointer; font-size:12px; padding:2px 4px; border-radius:3px; user-select:none;">
+                                <span class="dept-legend-color" style="display:inline-block !important; width:13px !important; height:13px !important; min-width:13px !important; min-height:13px !important; background-color:${item.color} !important; border-radius:2px !important; flex-shrink:0 !important; margin-right:8px !important;"></span>
+                                <span class="dept-legend-text" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${Utils.escapeHtml(item.name)}</span>
+                                <span class="dept-legend-hours" style="margin-left:auto; padding-left:8px; font-size:11px; opacity:0.85; white-space:nowrap;">${item.count}건 <span style="font-size:10px;">(${item.pct}%)</span></span>
+                            </li>
+                            <li class="dept-user-sublist" data-sublist-idx="${item.index}" style="display:none; list-style:none; margin:0 0 4px 21px; padding:4px 8px; border-left:2px solid ${item.color}; background:rgba(128,128,128,0.06); border-radius:0 4px 4px 0; font-size:11px; text-align:left;">
+                                ${userRowsHtml}
+                            </li>
+                        `;
+                    }).join('')}
+                </ul>
+            `;
+
+            const items = legendWrapper.querySelectorAll('.dept-legend-item');
+            items.forEach(el => {
+                const idx = parseInt(el.dataset.deptIdx, 10);
+                const sublistEl = legendWrapper.querySelector(`.dept-user-sublist[data-sublist-idx="${idx}"]`);
+
+                el.addEventListener('click', () => {
+                    if (sublistEl) {
+                        sublistEl.style.display = sublistEl.style.display === 'none' ? 'block' : 'none';
+                    }
+                });
+
+                el.addEventListener('mouseenter', () => {
+                    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+                    el.style.backgroundColor = isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.15)';
+                    el.style.fontWeight = '600';
+                    if (this.deptChart) {
+                        this.deptChart.setActiveElements([{ datasetIndex: 0, index: idx }]);
+                        this.deptChart.tooltip.setActiveElements([{ datasetIndex: 0, index: idx }], { x: 0, y: 0 });
+                        this.deptChart.update();
+                    }
+                });
+                el.addEventListener('mouseleave', () => {
+                    el.style.backgroundColor = 'transparent';
+                    el.style.fontWeight = 'normal';
+                    if (this.deptChart) {
+                        this.deptChart.setActiveElements([]);
+                        this.deptChart.tooltip.setActiveElements([], { x: 0, y: 0 });
+                        this.deptChart.update();
+                    }
+                });
+            });
+        }
+
+        this.deptChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: dataVals,
+                    backgroundColor: bgColors,
+                    borderWidth: 1,
+                    borderColor: '#ffffff',
+                    hoverOffset: 5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '60%',
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label(context) {
+                                const val = context.parsed;
+                                const pct = totalDenials > 0 ? ((val / totalDenials) * 100).toFixed(1) : 0;
+                                return ` ${context.label}: 초과 요청 ${val}건 (${pct}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    },
+
+    renderInsights() {
+        const listEl = document.getElementById('reqPeakSummaryList');
+        if (!listEl || !this.rawData) return;
+
+        const totalSessions = this.rawData.total_sessions !== undefined ? this.rawData.total_sessions : (this.rawData.total_requests || 0);
+        if (!totalSessions || totalSessions === 0) {
+            listEl.innerHTML = `
+                <li>선택하신 기간에는 License 부족으로 인한 초과 요청(Denial) 이력이 없습니다 (정상 운영).</li>
+                <li>정규 근무시간(08:00~17:00) 내 거절 발생 슬롯 및 대기 인원이 모두 0건(0.0%)입니다.</li>
+            `;
+            return;
+        }
+
+        const denialSlotRatePct = this.rawData.denial_slot_rate_pct !== undefined ? this.rawData.denial_slot_rate_pct : 0.0;
+        const denialSlotsCount = this.rawData.denial_slots_count !== undefined ? this.rawData.denial_slots_count : 0;
+        const totalWorkSlots = this.rawData.total_work_slots !== undefined ? this.rawData.total_work_slots : 0;
+        const dailyAvgSessions = this.rawData.daily_avg_sessions !== undefined ? this.rawData.daily_avg_sessions : 0.0;
+        const uniqueUsersCount = this.rawData.unique_users_count || 0;
+        const totalActiveUsers = this.rawData.total_active_users || 0;
+        const affectedUserRatePct = this.rawData.affected_user_rate_pct !== undefined ? this.rawData.affected_user_rate_pct : 0.0;
+        const avgWait = this.rawData.avg_waiters !== undefined ? this.rawData.avg_waiters : 0.0;
+        const peakWait = this.rawData.peak_waiters || 0;
+        const topDept = this.rawData.top_dept || '-';
+        const topDeptCount = this.rawData.top_dept_count || 0;
+        const topDeptPct = this.rawData.top_dept_pct || 0;
+
+        listEl.innerHTML = `
+            <li>조회 기간 내 초과 요청(Denial) 발생 슬롯 비율은 <strong>${denialSlotRatePct}%</strong> (${denialSlotsCount}/${totalWorkSlots}개 슬롯, 일평균 <strong>${dailyAvgSessions}건</strong>)입니다.</li>
+            <li>실제 CATIA 가동 인원 <strong>${totalActiveUsers}명</strong> 중 거절 경험 인원은 <strong>${uniqueUsersCount}명</strong> (영향 비율 <strong>${affectedUserRatePct}%</strong>)입니다.</li>
+            <li>초과 발생 시 평균 동시 대기자는 <strong>+${avgWait.toFixed(1)}명</strong>, 단일 슬롯 최대 피크 대기자는 <strong>+${peakWait}명</strong>입니다.</li>
+            <li>최다 초과 요청(Denial) 발생 부서는 <strong>${Utils.escapeHtml(topDept)}</strong> (유효 부족 <strong>${topDeptCount}건</strong>, 비중 <strong>${topDeptPct}%</strong>)입니다.</li>
+        `;
     },
 
     renderTable() {
@@ -3272,6 +3578,7 @@ const App = {
                 if (RealtimeModule?.sparklineChart) RealtimeModule.sparklineChart.resize();
                 if (StatsModule?.mainChart) StatsModule.mainChart.resize();
                 if (StatsModule?.deptChart) StatsModule.deptChart.resize();
+                if (RequestsModule?.deptChart) RequestsModule.deptChart.resize();
                 if (RequestsModule?.chart) {
                     RequestsModule.chart.resize();
                     RequestsModule.chart.update('none');

@@ -614,6 +614,37 @@
                             </div>
                         </div>
 
+                        <!-- Requests Department Share Distribution & Insight -->
+                        <div class="stats-grid mb-4">
+                            <div class="stats-box">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                                    <h4 style="margin: 0;"><i class="fa-solid fa-pie-chart"></i> 부서별 초과 요청(Denial) 비중 Chart</h4>
+                                    <div class="tab-toggle-group" style="margin: 0;">
+                                        <button class="btn-tab-sm active" id="btnReqDeptModeTop6" data-req-dept-mode="top6" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
+                                            상위 6개+기타
+                                        </button>
+                                        <button class="btn-tab-sm" id="btnReqDeptModeAll" data-req-dept-mode="all" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
+                                            전체 부서 표시
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dept-chart-flex" style="display: flex; gap: 1rem; align-items: center; height: 210px;">
+                                    <div style="flex: 1; height: 100%; position: relative; max-width: 190px;">
+                                        <canvas id="reqDeptPieChart"></canvas>
+                                    </div>
+                                    <div class="dept-legend-wrapper" id="reqDeptLegendWrapper" style="flex: 1.4; height: 100%; overflow-y: auto; padding-right: 0.35rem;">
+                                        <!-- Dynamic Custom HTML Legend List -->
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="stats-box">
+                                <h4><i class="fa-solid fa-clipboard-check"></i> 초과 요청 분석 Insight</h4>
+                                <ul class="summary-list" id="reqPeakSummaryList">
+                                    <li class="text-muted">데이터를 분석 중입니다...</li>
+                                </ul>
+                            </div>
+                        </div>
+
                         <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
                             <table class="data-table" id="requestsTable">
                                 <thead>

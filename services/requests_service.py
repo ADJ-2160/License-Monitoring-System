@@ -166,11 +166,34 @@ class RequestsService:
             if cur_cluster:
                 items.append(self._build_session_record(cur_cluster, host_user_cache, host_ip_map))
 
+        dept_user_details: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        dept_raw_requests: Dict[str, int] = {}
         for it in items:
             dates_with_requests.add(it["date"])
-            dept_stats[it["dept_name"]] = dept_stats.get(it["dept_name"], 0) + 1
-            user_stats[it["user_name"]] = user_stats.get(it["user_name"], 0) + 1
-            unique_users_set.add(it.get("user_key") or it["user_name"])
+            d_name = it["dept_name"]
+            retry_cnt = it.get("retry_count", 1)
+            dept_stats[d_name] = dept_stats.get(d_name, 0) + 1
+            dept_raw_requests[d_name] = dept_raw_requests.get(d_name, 0) + retry_cnt
+            u_key = it.get("user_key") or it["user_name"]
+            if u_key not in user_stats:
+                user_stats[u_key] = {"user_name": it["user_name"], "count": 0}
+            user_stats[u_key]["count"] += 1
+            unique_users_set.add(u_key)
+            if d_name not in dept_user_details:
+                dept_user_details[d_name] = {}
+            if u_key not in dept_user_details[d_name]:
+                dept_user_details[d_name][u_key] = {
+                    "user_name": it["user_name"],
+                    "emp_no": it.get("emp_no", "-"),
+                    "hostnames": set(),
+                    "count": 0,
+                    "raw_requests": 0
+                }
+            h_val = it.get("hostname", "-")
+            if h_val and h_val != "-":
+                dept_user_details[d_name][u_key]["hostnames"].add(h_val)
+            dept_user_details[d_name][u_key]["count"] += 1
+            dept_user_details[d_name][u_key]["raw_requests"] += retry_cnt
 
         items.sort(key=lambda x: (x["date_ymd"], x["raw_time"]))
 
@@ -275,10 +298,35 @@ class RequestsService:
             if total_active_users > 0 else 0.0
         )
 
-        top_dept = sorted(dept_stats.items(), key=lambda x: x[1], reverse=True)[0][0] if dept_stats else "-"
-        top_user = sorted(user_stats.items(), key=lambda x: x[1], reverse=True)[0][0] if user_stats else "-"
+        total_sess = len(items)
+        dept_dist = []
+        for d_name, cnt in sorted(dept_stats.items(), key=lambda x: x[1], reverse=True):
+            u_map = dept_user_details.get(d_name, {})
+            u_list = []
+            for u_info in sorted(u_map.values(), key=lambda x: (x["count"], x["raw_requests"]), reverse=True):
+                u_list.append({
+                    "user_name": u_info["user_name"],
+                    "emp_no": u_info["emp_no"],
+                    "hostname": ", ".join(sorted(u_info["hostnames"])) if u_info["hostnames"] else "-",
+                    "count": u_info["count"],
+                    "raw_requests": u_info["raw_requests"]
+                })
+            dept_dist.append({
+                "dept_name": d_name,
+                "share_pct": round((cnt / total_sess) * 100, 1) if total_sess > 0 else 0.0,
+                "count": cnt,
+                "raw_requests": dept_raw_requests.get(d_name, cnt),
+                "user_count": len(u_list),
+                "users": u_list
+            })
+
+        top_dept = dept_dist[0]["dept_name"] if dept_dist else "-"
+        top_user = (
+            sorted(user_stats.values(), key=lambda x: x["count"], reverse=True)[0]["user_name"]
+            if user_stats else "-"
+        )
         top_dept_count = dept_stats.get(top_dept, 0)
-        top_dept_pct = round(top_dept_count / len(items) * 100, 1) if (items and top_dept_count > 0) else 0.0
+        top_dept_pct = round(top_dept_count / total_sess * 100, 1) if (total_sess > 0 and top_dept_count > 0) else 0.0
         date_label = f"{dates_iso[0]} ~ {dates_iso[-1]}" if is_multi_date else dates_iso[0]
 
         res = {
@@ -288,7 +336,7 @@ class RequestsService:
             "start_date": dates_iso[0],
             "end_date": dates_iso[-1],
             "total_requests": raw_count,
-            "total_sessions": len(items),
+            "total_sessions": total_sess,
             "daily_avg_sessions": daily_avg_sessions,
             "denial_slots_count": denial_slots_count,
             "total_work_slots": total_work_slots,
@@ -306,9 +354,10 @@ class RequestsService:
             "top_dept_pct": top_dept_pct,
             "top_user": top_user,
             "dept_stats": dept_stats,
+            "dept_distribution": dept_dist,
             "timeseries_15m": timeseries_15m,
             "notice": (
-                f"※ {date_label} 기간 동안 DSLS License 풀 초과로 인한 Denial 이력 총 {raw_count}회 시도(단기 재시도 보정 유효 부족 {len(items)}건, 영향 사용자 {len(unique_users_set)}명)가 집계되었습니다."
+                f"※ {date_label} 기간 동안 DSLS License 풀 초과로 인한 Denial 이력 총 {raw_count}회 시도(단기 재시도 보정 유효 부족 {total_sess}건, 영향 사용자 {len(unique_users_set)}명)가 집계되었습니다."
                 if items else
                 f"※ {date_label} 기간 동안 License 부족으로 인한 Denial 이력이 없습니다. (License 정상 운영)"
             ),
