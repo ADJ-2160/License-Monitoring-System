@@ -10,6 +10,7 @@ import os
 import datetime
 from typing import Optional
 
+import uvicorn
 from fastapi import FastAPI, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -205,3 +206,16 @@ async def export_license_data(
         add_seats=add_seats,
         base_limit=base_limit
     )
+
+
+# ---------------------------------------------------------
+# Server Execution Entry Point
+# ---------------------------------------------------------
+if __name__ == "__main__":
+    uvicorn.run(
+        "app:app",
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", 8000)),
+        reload=True
+    )
+
