@@ -318,8 +318,8 @@ def run_phase3_static_contract() -> bool:
 
 def clean_unused_imports_from_file(file_path: str, unused_imports: list) -> int:
     """
-    Safely cleans single-import statements that are confirmed unused.
-    Returns the number of removed lines.
+    Safely cleans single-import statements or single-symbol lines in multi-line imports
+    that are confirmed unused. Returns the number of removed lines.
     """
     if not unused_imports:
         return 0
@@ -339,6 +339,15 @@ def clean_unused_imports_from_file(file_path: str, unused_imports: list) -> int:
         # Case 2: Simple from x import y (single import)
         elif re.match(rf"^from\s+[\w\.]+\s+import\s+{re.escape(name)}\s*$", line):
             lines_to_remove.add(idx)
+        else:
+            # Case 3: Multi-line import block where a line within the statement is just `name` or `name,`
+            for scan_idx in range(idx, min(idx + 30, len(lines))):
+                scan_line = lines[scan_idx].strip()
+                if re.match(rf"^{re.escape(name)}\s*,?\s*$", scan_line):
+                    lines_to_remove.add(scan_idx)
+                    break
+                if ")" in scan_line and scan_idx > idx:
+                    break
 
     if not lines_to_remove:
         return 0
@@ -360,7 +369,7 @@ def run_phase4_dead_code_audit(auto_clean: bool = True) -> bool:
 
     # 4-1. AST Unused Import Audit
     print("  [AUDIT 4-1] Scanning AST for unused imports across %d Python files..." % len(py_files))
-    unused_imports_found = []
+    uncleaned_imports = []
     cleaned_count = 0
 
     for pf in py_files:
@@ -386,17 +395,20 @@ def run_phase4_dead_code_audit(auto_clean: bool = True) -> bool:
                             imported[name] = (node.lineno, f"{node.module}.{alias.name}", "from")
                 elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Store):
                     used_names.add(node.id)
-                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-                    for word in re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', node.value):
-                        used_names.add(word)
                 elif hasattr(node, 'annotation') and node.annotation:
                     for sub in ast.walk(node.annotation):
                         if isinstance(sub, ast.Name):
                             used_names.add(sub.id)
+                        elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                            for word in re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', sub.value):
+                                used_names.add(word)
                 elif hasattr(node, 'returns') and node.returns:
                     for sub in ast.walk(node.returns):
                         if isinstance(sub, ast.Name):
                             used_names.add(sub.id)
+                        elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                            for word in re.findall(r'\b[A-Za-z_][A-Za-z0-9_]*\b', sub.value):
+                                used_names.add(word)
 
             file_unused = []
             rel_path = os.path.relpath(pf, WORKSPACE_DIR)
@@ -405,6 +417,7 @@ def run_phase4_dead_code_audit(auto_clean: bool = True) -> bool:
                     file_unused.append((lineno, name, orig, imp_type))
 
             if file_unused:
+                cleaned = 0
                 if auto_clean:
                     cleaned = clean_unused_imports_from_file(pf, file_unused)
                     cleaned_count += cleaned
@@ -412,15 +425,16 @@ def run_phase4_dead_code_audit(auto_clean: bool = True) -> bool:
                         print(f"  [AUTO-CLEAN] Cleaned {cleaned} unused import(s) in {rel_path}")
                         with open(pf, "r", encoding="utf-8") as f:
                             ast.parse(f.read(), filename=pf)
-                for item in file_unused:
-                    unused_imports_found.append(f"{rel_path}:{item[0]} -> {item[2]} (imported as '{item[1]}')")
+                if cleaned < len(file_unused):
+                    for item in file_unused:
+                        uncleaned_imports.append(f"{rel_path}:{item[0]} -> {item[2]} (imported as '{item[1]}')")
         except Exception as e:
             print(f"❌ Error parsing {pf}: {e}")
             all_passed = False
 
-    if unused_imports_found and not auto_clean:
-        print("❌ [FAIL] 4-1. Found unused imports:")
-        for item in unused_imports_found:
+    if uncleaned_imports:
+        print("❌ [FAIL] 4-1. Found unused imports that require cleanup:")
+        for item in uncleaned_imports:
             print(f"     - {item}")
         all_passed = False
     elif cleaned_count > 0:
@@ -464,9 +478,11 @@ def run_phase4_dead_code_audit(auto_clean: bool = True) -> bool:
     else:
         print("  [PASS] 4-2. Unreachable Dead Code: 0 unreachable blocks detected")
 
-    # 4-3. AST Unused Local Variables Audit
-    print("  [AUDIT 4-3] Scanning AST for unused local variables in functions...")
+    # 4-3. AST Unused Local Variables, Function Parameters & Config Constants Audit
+    print("  [AUDIT 4-3] Scanning AST for unused local variables, parameters, and config constants...")
     unused_vars_found = []
+    all_symbols_loaded_across_codebase = set()
+
     for pf in py_files:
         if os.path.basename(pf) == "__init__.py":
             continue
@@ -477,40 +493,71 @@ def run_phase4_dead_code_audit(auto_clean: bool = True) -> bool:
             rel_path = os.path.relpath(pf, WORKSPACE_DIR)
 
             for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Store):
+                    all_symbols_loaded_across_codebase.add(node.id)
+                elif isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        all_symbols_loaded_across_codebase.add(alias.name)
+
+            for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    arg_names = set(a.arg for a in node.args.args)
-                    if node.args.vararg:
-                        arg_names.add(node.args.vararg.arg)
-                    if node.args.kwarg:
-                        arg_names.add(node.args.kwarg.arg)
-                    for a in node.args.kwonlyargs:
-                        arg_names.add(a.arg)
+                    arg_map = {}
+                    for a in node.args.args + node.args.kwonlyargs:
+                        if a.arg not in ("self", "cls") and not a.arg.startswith("_"):
+                            arg_map[a.arg] = a.lineno
+                    if node.args.vararg and not node.args.vararg.arg.startswith("_"):
+                        arg_map[node.args.vararg.arg] = node.args.vararg.lineno
+                    if node.args.kwarg and not node.args.kwarg.arg.startswith("_"):
+                        arg_map[node.args.kwarg.arg] = node.args.kwarg.lineno
 
                     assigned = {}
                     loaded = set()
 
-                    for sub in ast.walk(node):
-                        if isinstance(sub, ast.Name):
-                            if isinstance(sub.ctx, ast.Store):
-                                if sub.id not in arg_names and not sub.id.startswith("_") and sub.id not in ("self", "cls"):
-                                    assigned[sub.id] = sub.lineno
-                            elif isinstance(sub.ctx, (ast.Load, ast.Del)):
-                                loaded.add(sub.id)
+                    for stmt in node.body:
+                        for sub in ast.walk(stmt):
+                            if isinstance(sub, ast.Name):
+                                if isinstance(sub.ctx, ast.Store):
+                                    if sub.id not in arg_map and not sub.id.startswith("_") and sub.id not in ("self", "cls"):
+                                        assigned[sub.id] = sub.lineno
+                                elif isinstance(sub.ctx, (ast.Load, ast.Del)):
+                                    loaded.add(sub.id)
+
+                    for pname, lno in arg_map.items():
+                        if pname not in loaded:
+                            unused_vars_found.append(f"{rel_path}:{lno} in {node.name}() -> unused parameter '{pname}'")
 
                     for vname, lno in assigned.items():
                         if vname not in loaded:
-                            unused_vars_found.append(f"{rel_path}:{lno} in {node.name}() -> variable '{vname}'")
+                            unused_vars_found.append(f"{rel_path}:{lno} in {node.name}() -> unused variable '{vname}'")
         except Exception as e:
             print(f"❌ Error parsing {pf}: {e}")
             all_passed = False
 
+    # Check top-level constants in services/config.py
+    config_path = os.path.join(WORKSPACE_DIR, "services", "config.py")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg_tree = ast.parse(f.read(), filename=config_path)
+            for stmt in cfg_tree.body:
+                if isinstance(stmt, ast.Assign):
+                    for target in stmt.targets:
+                        if isinstance(target, ast.Name) and target.id.isupper():
+                            if target.id not in all_symbols_loaded_across_codebase:
+                                unused_vars_found.append(
+                                    f"services/config.py:{stmt.lineno} -> unreferenced config constant '{target.id}'"
+                                )
+        except Exception as e:
+            print(f"❌ Error parsing config.py: {e}")
+            all_passed = False
+
     if unused_vars_found:
-        print("❌ [FAIL] 4-3. Found unused local variables:")
+        print("❌ [FAIL] 4-3. Found unused variables, parameters, or config constants:")
         for item in unused_vars_found:
             print(f"     - {item}")
         all_passed = False
     else:
-        print("  [PASS] 4-3. Unused Local Variables: 0 unused local variables detected")
+        print("  [PASS] 4-3. Unused Symbols: 0 unused local variables, parameters, or config constants detected")
 
     # 4-4. Dependency Manifest Sync Audit
     print("  [AUDIT 4-4] Checking requirements.txt dependency manifest synchronization...")

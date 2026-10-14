@@ -7,7 +7,6 @@ import datetime
 from typing import Dict, Any, List
 from services.config import (
     TOTAL_MD2_LIMIT,
-    PEAK_WARNING_THRESHOLD,
     CRITICAL_THRESHOLD,
     WARNING_THRESHOLD,
     WORK_HOURS_SLOTS_15M,
@@ -44,7 +43,6 @@ class RealtimeService:
         # 1. Parse 15m cumulative slot usage and first/last seen for today
         today_slot_hosts: Dict[str, set] = {s: set() for s in WORK_HOURS_SLOTS_15M}
         today_user_slots: Dict[str, set] = {}
-        today_user_min_time: Dict[str, str] = {}
 
         if os.path.exists(log_file_15m):
             try:
@@ -80,16 +78,10 @@ class RealtimeService:
                         if not slot:
                             continue
 
-                        t_int = int(t_str)
-                        fmt_time = f"{t_int // 100:02d}:{t_int % 100:02d}"
-
                         host_part = comp_prod.split("/", 1)[0].strip().upper() if "/" in comp_prod else comp_prod.strip().upper()
 
                         if host_part not in today_user_slots:
                             today_user_slots[host_part] = set()
-                            today_user_min_time[host_part] = fmt_time
-                        elif fmt_time < today_user_min_time[host_part]:
-                            today_user_min_time[host_part] = fmt_time
 
                         today_slot_hosts[slot].add(host_part)
                         today_user_slots[host_part].add(slot)

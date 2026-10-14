@@ -394,12 +394,6 @@ class UserMasterService:
 
         # Step 1: Parse Main CSV (Keyed by UPPER(HOSTNAME))
         main_mapping = self._parse_csv_file(USER_MASTER_PATH)
-        self._main_cache = {k: v.copy() for k, v in main_mapping.items()}
-        self._main_ip_map = {
-            v["IP"]: v.copy()
-            for v in main_mapping.values()
-            if v.get("IP") and v.get("IP") not in ["-", "미등록", ""]
-        }
 
         # Step 2: Parse Sub CSV / equipment_override.json (Keyed by UPPER(HOSTNAME))
         sub_records = self._get_sub_master(force_reload=force_reload)
