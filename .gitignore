@@ -1,0 +1,15 @@
+# Python Bytecode & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Internal Employee / Host / IP Configuration & Runtime Caches (Security)
+conf/*.json
+!conf/.gitkeep
+
+# OS & Editor Temp Files
+.DS_Store
+Thumbs.db

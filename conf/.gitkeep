@@ -1,0 +1,1 @@
+# Keep conf/ directory in Git while ignoring conf/*.json

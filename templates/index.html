@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <title>CATIA License Monitoring System</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Flatpickr CSS -->
+    <link rel="stylesheet" href="/static/vendor/flatpickr.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/style.css?v=6.2">
+</head>
+<body class="sidebar-layout">
+    <!-- Top Global Header Bar (Site-wide controls & title) -->
+    <header class="global-top-header" id="globalTopHeader">
+        <div class="global-header-left">
+            <button class="btn-sidebar-toggle" id="btnToggleSidebar" title="사이드바 축소/확장">
+                <i class="fa-solid fa-bars-staggered" id="sidebarCollapseIcon"></i>
+            </button>
+            <div class="global-brand">
+                <img src="/static/favicon.ico" alt="CATIA Logo" class="brand-icon-img">
+                <span class="brand-title">CATIA License Monitoring System</span>
+            </div>
+            <div class="header-kpi-chip" title="현재 CATIA MD2 라이선스 실시간 점유 현황">
+                <span class="kpi-chip-label"><i class="fa-solid fa-chart-pie text-blue"></i> MD2 실시간:</span>
+                <span class="kpi-chip-val font-mono" id="headerLiveOccupancy">-- / 51</span>
+            </div>
+        </div>
+
+        <div class="global-header-right">
+            <span class="header-update-time" id="lastUpdatedTime">--:--:-- 갱신</span>
+            <div class="header-server-time-box" title="서버 기준 실시간 갱신 시각">
+                <i class="fa-regular fa-clock text-dim"></i>
+                <span class="font-mono text-muted" id="sidebarServerTime">--:--:--</span>
+            </div>
+            <div class="header-action-group">
+                <button class="btn btn-icon" id="btnRefresh" title="전체 새로고침">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+                <button class="btn btn-icon btn-theme-toggle" id="btnThemeToggle" title="테마 변경 (다크 / 라이트 모드)">
+                    <i class="fa-solid fa-moon" id="themeIcon"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="app-layout" id="appLayout">
+        <!-- Left Sidebar Navigation -->
+        <aside class="app-sidebar" id="appSidebar">
+            <nav class="sidebar-nav">
+                <ul class="nav-menu">
+                    <li class="nav-item">
+                        <button class="nav-link active" data-view="viewOverview" id="navLinkOverview" title="실시간 License 현황">
+                            <i class="fa-solid fa-gauge-high nav-icon"></i>
+                            <span class="nav-label">실시간 License 현황</span>
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-view="viewStats" id="navLinkStats" title="1. 사용 통계 분석">
+                            <i class="fa-solid fa-chart-area nav-icon"></i>
+                            <span class="nav-label">1. 사용 통계 분석</span>
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-view="viewRequests" id="navLinkRequests" title="2. 초과 요청 (Denial)">
+                            <i class="fa-solid fa-file-invoice nav-icon"></i>
+                            <span class="nav-label">2. 초과 요청 (Denial)</span>
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-view="viewSimulation" id="navLinkSimulation" title="3. 증설 예측 시뮬레이션">
+                            <i class="fa-solid fa-wand-magic-sparkles nav-icon"></i>
+                            <span class="nav-label">3. 증설 예측 시뮬레이션</span>
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-view="viewPivot" id="navLinkPivot" title="4. 사용자 점유 피벗">
+                            <i class="fa-solid fa-users-viewfinder nav-icon"></i>
+                            <span class="nav-label">4. 사용자 점유 피벗</span>
+                        </button>
+                    </li>
+                </ul>
+            </nav>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="app-main-content" id="appMainContent">
+            <!-- Local View Header Bar -->
+            <div class="view-header-bar" id="currentViewHeader">
+                <div class="current-view-info">
+                    <h1 class="view-header-title" id="currentViewTitle">
+                        <i class="fa-solid fa-gauge-high" id="currentViewIcon"></i>
+                        <span id="currentViewName">실시간 License 현황</span>
+                    </h1>
+                    <span class="view-header-desc" id="currentViewDesc">CATIA MD2 실시간 점유 현황 및 모듈별 상태</span>
+                </div>
+            </div>
+
+            <!-- Main Content Views Container -->
+            <div class="content-views-wrapper">
+                <!-- View 1: 실시간 License 현황 -->
+                <div class="content-view active" id="viewOverview">
+                    <!-- KPI Metric Summary Bar -->
+                    <section class="kpi-section">
+            <div class="kpi-card highlight">
+                <div class="kpi-icon"><i class="fa-solid fa-chart-pie"></i></div>
+                <div class="kpi-info">
+                    <span class="kpi-label">실시간 License 점유</span>
+                    <div class="kpi-value" id="kpiUsedText">-- / 51</div>
+                </div>
+            </div>
+            <div class="kpi-card success">
+                <div class="kpi-icon"><i class="fa-solid fa-check-circle"></i></div>
+                <div class="kpi-info">
+                    <span class="kpi-label">잔여 License 수량</span>
+                    <div class="kpi-value" id="kpiAvailableText">--개</div>
+                </div>
+            </div>
+            <div class="kpi-card warning">
+                <div class="kpi-icon"><i class="fa-solid fa-gauge-high"></i></div>
+                <div class="kpi-info">
+                    <span class="kpi-label">전체 점유율</span>
+                    <div class="kpi-value" id="kpiRateText">--%</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Always visible Overview Section -->
+        <section class="overview-grid">
+            <!-- License Modules Breakdown -->
+            <div class="dashboard-panel">
+                <div class="panel-header">
+                    <h3>
+                        <i class="fa-solid fa-layer-group"></i> License Module별 실시간 사용 현황
+                        <span class="badge badge-blue ml-2" style="font-size: 0.75rem; vertical-align: middle;">1분 단위 실시간</span>
+                    </h3>
+                </div>
+                <div class="panel-body" id="licModuleContainer">
+                    <!-- Progress bars & Accordion populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Time Series Sparkline Summary -->
+            <div class="dashboard-panel sparkline-panel">
+                <div class="panel-header">
+                    <h3>
+                        <i class="fa-solid fa-chart-line"></i> 시간대별 평균 License 점유 추이
+                        <span class="badge badge-light ml-2" style="font-size: 0.75rem; vertical-align: middle;">15분 집계 기준</span>
+                    </h3>
+                    <div class="sparkline-header-meta" id="sparklineHeaderMeta">
+                        <span class="badge badge-blue font-mono" id="spkHeaderDateBadge">--</span>
+                    </div>
+                </div>
+                <div class="panel-body sparkline-panel-body">
+                    <!-- Real-time Sparkline KPI Summary Cards -->
+                    <div class="sparkline-kpi-row" id="sparklineKpiRow">
+                        <div class="sparkline-stat-card">
+                            <span class="stat-label"><i class="fa-solid fa-bolt text-yellow"></i> 당일 피크 점유</span>
+                            <div class="stat-val font-mono" id="spkTodayPeak">--개</div>
+                            <span class="stat-sub font-mono" id="spkTodayPeakTime">--:-- 기준</span>
+                        </div>
+                        <div class="sparkline-stat-card">
+                            <span class="stat-label"><i class="fa-solid fa-chart-simple text-blue"></i> 평일 평균 피크</span>
+                            <div class="stat-val font-mono" id="spkHistPeak">--개</div>
+                            <span class="stat-sub" id="spkHistPeakDays">과거 누적 평균</span>
+                        </div>
+                    </div>
+
+                    <!-- Sparkline Chart Area -->
+                    <div class="chart-box sparkline-chart-box">
+                        <canvas id="miniSparklineChart"></canvas>
+                    </div>
+
+                    <!-- Sparkline Insight Footer -->
+                    <div class="sparkline-insight-footer" id="sparklineInsightFooter">
+                        <i class="fa-solid fa-circle-info text-blue"></i>
+                        <span id="spkInsightText">점유 집중 시간대(14:00~16:30)에는 사용 후 즉시 라이선스 반납을 권장합니다.</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- View 1 Integrated Section: License 이상 점유 현황 (Live 유휴 점유 모니터링) -->
+        <section class="anomaly-overview-section" id="sectionAnomalyOverview" style="margin-top: 1.25rem;">
+            <div class="dashboard-panel" style="height: auto;">
+                <div class="panel-header">
+                    <h3>
+                        <i class="fa-solid fa-triangle-exclamation text-yellow"></i> CATIA 프로세스 실시간 유휴 점유(Idle) 이상 감지
+                        <span class="badge badge-warning ml-2" id="overviewAnomalyBadge" style="font-size: 0.75rem; vertical-align: middle;">실시간 감지</span>
+                    </h3>
+                    <span class="badge badge-info" style="font-size: 0.78rem;">
+                        <i class="fa-solid fa-signal"></i> Live Sync
+                    </span>
+                </div>
+                <div class="panel-body" style="padding-top: 0.25rem;">
+                    <div class="accordion-item" id="accordionAnomalyItem">
+                        <div class="accordion-content" id="acc-anomaly" style="display: block;">
+                            <div class="accordion-inner" style="padding: 0;">
+                                <div class="anomaly-alert-box" id="anomalyAlertHeader">
+                                    <i class="fa-solid fa-circle-exclamation alert-icon"></i>
+                                    <div class="alert-text">
+                                        <h4 id="anomalyCountTitle">CATIA 프로세스 실시간 유휴 진입(Idle) 이상 점유 모니터링</h4>
+                                    </div>
+                                </div>
+
+                                <!-- Anomaly Toolbar (Realtime Refresh, Department Filter, Search Keyword, Export) -->
+                                <div class="table-toolbar mt-3">
+                                    <div class="toolbar-left-group">
+                                        <button class="btn btn-primary" id="btnRefreshAnomaly">
+                                            <i class="fa-solid fa-arrows-rotate"></i> 실시간 새로고침
+                                        </button>
+                                        <span class="badge badge-info" style="font-size: 0.82rem; padding: 6px 12px;">
+                                            <i class="fa-solid fa-signal"></i> 실시간(Live) 모니터링
+                                        </span>
+                                    </div>
+                                    <div class="toolbar-right-group">
+                                        <select id="anomalyDeptFilter" class="form-select">
+                                            <option value="전체">전체 부서</option>
+                                        </select>
+                                        <div class="search-input-wrapper">
+                                            <i class="fa-solid fa-search"></i>
+                                            <input type="text" id="anomalySearchInput" placeholder="성명, 사번, 장비명, IP 검색...">
+                                        </div>
+                                        <div class="export-btn-group">
+                                            <button class="btn btn-secondary" id="btnExportAnomalyCsv">
+                                                <i class="fa-solid fa-file-csv"></i> CSV
+                                            </button>
+                                            <button class="btn btn-secondary" id="btnExportAnomalyExcel">
+                                                <i class="fa-solid fa-file-excel"></i> Excel
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Anomaly Table -->
+                                <div class="table-responsive mt-3">
+                                    <table class="data-table" id="anomalyTable">
+                                        <thead>
+                                            <tr>
+                                                <th>발생 일시</th>
+                                                <th>소속 부서</th>
+                                                <th>사용자명</th>
+                                                <th>사번</th>
+                                                <th>장비명</th>
+                                                <th>IP</th>
+                                                <th>PID</th>
+                                                <th>CPU / MEM</th>
+                                                <th>탐지 이벤트</th>
+                                                <th>조치 권고</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="anomalyBody">
+                                            <!-- Dynamic Anomaly Rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div> <!-- /viewOverview -->
+
+    <!-- View 2: 1. 일자 및 시간대별 License 사용량 통계 분석 -->
+    <div class="content-view" id="viewStats">
+        <!-- Accordion 2: 1. 일자 및 시간대별 License 사용량 통계 분석 -->
+        <div class="accordion-item" id="accordionStatsItem">
+            <div class="accordion-trigger" data-target="acc-stats">
+                <div class="trigger-title">
+                    <i class="fa-solid fa-chart-area"></i>
+                    <span><u>1. 일자 및 시간대별 License 사용량 통계 분석</u></span>
+                </div>
+                    <i class="fa-solid fa-chevron-down accordion-icon"></i>
+                </div>
+                <div class="accordion-content" id="acc-stats">
+                    <div class="accordion-inner">
+                        <!-- Multi-Date Selector & Toolbar for Stats -->
+                        <div class="table-toolbar">
+                            <div class="toolbar-left-group">
+                                <div class="date-range-group">
+                                    <span class="date-label"><i class="fa-solid fa-calendar-days"></i> 분석 기간:</span>
+                                    <input type="text" class="form-date-input" id="statsStartDateInput" title="시작일" readonly placeholder="YYYY-MM-DD">
+                                    <span class="date-sep">~</span>
+                                    <input type="text" class="form-date-input" id="statsEndDateInput" title="종료일" readonly placeholder="YYYY-MM-DD">
+                                    <select id="statsPresetSelect">
+                                        <option value="custom">직접 지정</option>
+                                        <option value="1" selected>최근 1일</option>
+                                        <option value="3">최근 3일</option>
+                                        <option value="7">최근 7일</option>
+                                        <option value="14">최근 14일</option>
+                                        <option value="30">최근 30일</option>
+                                    </select>
+                                    <button class="btn btn-primary" id="btnSearchStats">
+                                        <i class="fa-solid fa-magnifying-glass"></i> 기간 분석
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="toolbar-right-group">
+                                <div class="tab-toggle-group">
+                                    <button class="btn-tab active" id="btnTabDailyMatrixStats" data-stat-view="matrix">
+                                        <i class="fa-solid fa-table-cells"></i> 일자별 사용량 Matrix
+                                    </button>
+                                    <button class="btn-tab" id="btnTab15mStats" data-stat-view="15m">
+                                        <i class="fa-solid fa-clock"></i> 15분 단위 통계
+                                    </button>
+                                    <button class="btn-tab" id="btnTabDailyStats" data-stat-view="daily">
+                                        <i class="fa-solid fa-calendar-day"></i> 일자별 Summary
+                                    </button>
+                                    <button class="btn-tab" id="btnTabHourlyStats" data-stat-view="hourly">
+                                        <i class="fa-solid fa-hourglass-half"></i> 1시간 단위 Summary
+                                    </button>
+                                </div>
+                                <div class="export-btn-group">
+                                    <button class="btn btn-secondary" id="btnExportStatsCsv">
+                                        <i class="fa-solid fa-file-csv"></i> CSV
+                                    </button>
+                                    <button class="btn btn-secondary" id="btnExportStatsExcel">
+                                        <i class="fa-solid fa-file-excel"></i> Excel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- KPI Summary Cards for Time Usage -->
+                        <div class="stats-kpi-grid" style="grid-template-columns: repeat(4, 1fr);">
+                            <div class="stats-kpi-card highlight-red" title="조회 기간 내 정규 근무시간(08:00~17:00, 점심시간 12:15~12:45 제외) 전체 슬롯 중 50개 이상 점유 슬롯 비율">
+                                <span class="stats-kpi-label">조회 기간 50개 이상 사용 비율</span>
+                                <div class="stats-kpi-val" id="kpiPeriodOver50PctText">--%</div>
+                                <span class="stats-kpi-sub" id="kpiPeriodOver50PctSub">50개 이상 슬롯: -- / --개 (점심 제외)</span>
+                            </div>
+                            <div class="stats-kpi-card highlight-orange" title="조회 기간 중 일별 50개 이상 사용 비율이 60% 이상을 기록한 고부하 일수">
+                                <span class="stats-kpi-label">50개 이상 비율 60% 이상 일수</span>
+                                <div class="stats-kpi-val" id="kpiDaysOver60PctText">--일</div>
+                                <span class="stats-kpi-sub" id="kpiDaysOver60PctSub">조회 기간 총 --일 중 (--%)</span>
+                            </div>
+                            <div class="stats-kpi-card highlight-blue" title="조회 기간 내 정규 근무시간(08:00~17:00) 평균 동시 점유 수량 및 가동률">
+                                <span class="stats-kpi-label">근무시간 평균 점유</span>
+                                <div class="stats-kpi-val" id="kpiWorkAvgText">--개</div>
+                                <span class="stats-kpi-sub" id="kpiWorkRateSub">가동률: --%</span>
+                            </div>
+                            <div class="stats-kpi-card highlight-green" title="조회 기간 내 CATIA(MD2)를 1회 이상 사용한 누적 고유 사용자 수 (중복 제거)">
+                                <span class="stats-kpi-label">조회 기간 누적 사용자 수</span>
+                                <div class="stats-kpi-val" id="kpiUniqueUsersText">--명</div>
+                                <span class="stats-kpi-sub" id="kpiUniqueUsersSub">1회 이상 사용 (중복 제거 · 총 --개 부서)</span>
+                            </div>
+                        </div>
+
+                        <!-- Chart Section with Chart Switcher -->
+                        <div class="chart-container-large mt-3">
+                            <div class="panel-sub-header">
+                                <div class="chart-title-group">
+                                    <h4 id="mainChartTitle"><i class="fa-solid fa-chart-line"></i> 시간대별 동시 점유 수량 추이</h4>
+                                </div>
+                                <div class="chart-tab-group">
+                                    <button class="btn-tab-sm active" id="btnChartModeLine" data-chart-mode="line">
+                                        <i class="fa-solid fa-chart-line"></i> 시간대별 추이 Line
+                                    </button>
+                                    <button class="btn-tab-sm" id="btnChartModeBar" data-chart-mode="bar">
+                                        <i class="fa-solid fa-chart-column"></i> 일자별 Peak Bar Chart
+                                    </button>
+                                    <span class="badge badge-green ml-2" id="statsDateBadge">--</span>
+                                </div>
+                            </div>
+                            <div class="chart-wrapper">
+                                <canvas id="mainTimeSeriesChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Dynamic Table View: Matrix vs 15m vs Daily vs Hourly -->
+                        <div class="stats-tables-container mt-4">
+                            <!-- Daily Usage Time Matrix Table (Default First) -->
+                            <div class="stats-view-panel active" id="viewMatrixStatsTable">
+                                <div class="panel-sub-header">
+                                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                        <h4><i class="fa-solid fa-table-cells"></i> 일자 및 시간대별 전체 사용량 Matrix</h4>
+                                        <span class="badge badge-purple" id="matrixStatsCountBadge">0일간 분석</span>
+                                    </div>
+                                    <div class="matrix-legend-row" style="display: flex; gap: 12px; align-items: center; font-size: 0.78rem;">
+                                        <span style="display: flex; align-items: center; gap: 4px;">
+                                            <span style="display: inline-block; width: 10px; height: 10px; background-color: #ef4444; border-radius: 2px;"></span>
+                                            <span style="color: #f87171; font-weight: 600;" id="matrixLegendPeak">50개 이상 (피크/포화)</span>
+                                        </span>
+                                        <span style="display: flex; align-items: center; gap: 4px;">
+                                            <span style="display: inline-block; width: 10px; height: 10px; background-color: #f59e0b; border-radius: 2px;"></span>
+                                            <span style="color: #fbbf24; font-weight: 600;" id="matrixLegendWarning">45~49개 주의</span>
+                                        </span>
+                                        <span style="display: flex; align-items: center; gap: 4px;">
+                                            <span style="display: inline-block; width: 10px; height: 10px; background-color: #3b82f6; border-radius: 2px;"></span>
+                                            <span style="color: #93c5fd;">정상 사용</span>
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="pivot-matrix-scroll-wrapper" style="max-height: 480px; overflow: auto;">
+                                    <table class="data-table daily-matrix-table" id="dailyMatrixStatsTable">
+                                        <thead id="dailyMatrixThead">
+                                            <!-- Dynamic Matrix Headers -->
+                                        </thead>
+                                        <tbody id="dailyMatrixTbody">
+                                            <!-- Dynamic Matrix Rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- 15m Detailed Table -->
+                            <div class="stats-view-panel" id="view15mStatsTable" style="display: none;">
+                                <div class="panel-sub-header">
+                                    <h4><i class="fa-solid fa-table-list"></i> 15분 단위 시간대별 사용 현황</h4>
+                                    <span class="badge badge-purple">총 37개 Time Slots</span>
+                                </div>
+                                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                    <table class="data-table" id="timeSeries15mTable">
+                                        <thead>
+                                            <tr>
+                                                <th>측정 시각</th>
+                                                <th>평균 사용 수량</th>
+                                                <th>최대(Peak) 수량</th>
+                                                <th>최소 사용 수량</th>
+                                                <th>점유 현황 Gauge</th>
+                                                <th>평균 점유율(%)</th>
+                                                <th>Peak Warning 상태</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="timeSeries15mTbody">
+                                            <!-- Dynamic 15m Rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Daily Summary Table -->
+                            <div class="stats-view-panel" id="viewDailyStatsTable" style="display: none;">
+                                <div class="panel-sub-header">
+                                    <h4><i class="fa-solid fa-calendar-days"></i> 일자별 Summary</h4>
+                                    <span class="badge badge-purple" id="dailyStatsCountBadge">0일간 분석</span>
+                                </div>
+                                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                    <table class="data-table" id="dailySummaryTable">
+                                        <thead>
+                                            <tr>
+                                                <th>일자</th>
+                                                <th>일일 평균 사용량</th>
+                                                <th>일일 최대 Peak</th>
+                                                <th>Peak 발생 시각</th>
+                                                <th>오전 Peak</th>
+                                                <th>오후 Peak</th>
+                                                <th>일일 평균 가동률(%)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="dailySummaryTbody">
+                                            <!-- Dynamic Daily Rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Hourly Aggregated Table -->
+                            <div class="stats-view-panel" id="viewHourlyStatsTable" style="display: none;">
+                                <div class="panel-sub-header">
+                                    <h4><i class="fa-solid fa-clock-rotate-left"></i> 1시간 단위 Summary</h4>
+                                    <span class="badge badge-purple">08:00 ~ 17:00</span>
+                                </div>
+                                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                    <table class="data-table" id="hourlySummaryTable">
+                                        <thead>
+                                            <tr>
+                                                <th>시간대</th>
+                                                <th>기간 평균 수량</th>
+                                                <th>기간 최대(Peak)</th>
+                                                <th>기간 최소 수량</th>
+                                                <th>평균 가동률(%)</th>
+                                                <th>15분 Slot별 수치 분포</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="hourlySummaryTbody">
+                                            <!-- Dynamic Hourly Rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Department Share Distribution -->
+                        <div class="stats-grid mt-4">
+                            <div class="stats-box">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                                    <h4 style="margin: 0;"><i class="fa-solid fa-pie-chart"></i> 부서별 점유 비중 Chart</h4>
+                                    <div class="tab-toggle-group" style="margin: 0;">
+                                        <button class="btn-tab-sm active" id="btnDeptModeTop6" data-dept-mode="top6" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
+                                            상위 6개+기타
+                                        </button>
+                                        <button class="btn-tab-sm" id="btnDeptModeAll" data-dept-mode="all" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
+                                            전체 부서 표시
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dept-chart-flex" style="display: flex; gap: 1rem; align-items: center; height: 210px;">
+                                    <div style="flex: 1; height: 100%; position: relative; max-width: 190px;">
+                                        <canvas id="deptPieChart"></canvas>
+                                    </div>
+                                    <div class="dept-legend-wrapper" id="deptLegendWrapper" style="flex: 1.4; height: 100%; overflow-y: auto; padding-right: 0.35rem;">
+                                        <!-- Dynamic Custom HTML Legend List -->
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="stats-box">
+                                <h4><i class="fa-solid fa-clipboard-check"></i> 기간 분석 Insight</h4>
+                                <ul class="summary-list" id="peakSummaryList">
+                                    <li class="text-muted">데이터를 분석 중입니다...</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div> <!-- /viewStats -->
+
+        <!-- View 3: 2. License 초과 요청 및 대기(Denial) 현황 분석 -->
+        <div class="content-view" id="viewRequests">
+            <!-- Accordion 3: 2. License 초과 요청 및 대기(Denial) 현황 분석 -->
+            <div class="accordion-item" id="accordionRequestsItem">
+                <div class="accordion-trigger" data-target="acc-requests">
+                    <div class="trigger-title">
+                        <i class="fa-solid fa-file-invoice"></i>
+                        <span><u>2. License 초과 요청 및 대기(Denial) 현황 분석</u></span>
+                    </div>
+                    <i class="fa-solid fa-chevron-down accordion-icon"></i>
+                </div>
+                <div class="accordion-content" id="acc-requests">
+                    <div class="accordion-inner">
+                        <div class="table-toolbar">
+                            <div class="toolbar-left-group">
+                                <div class="date-range-group">
+                                    <span class="date-label"><i class="fa-solid fa-calendar-days"></i> 분석 기간:</span>
+                                    <input type="text" class="form-date-input" id="requestStartDateInput" max="{{ max_past_date }}" title="시작일 (최대 전일까지 선택 가능)" readonly placeholder="YYYY-MM-DD">
+                                    <span class="date-sep">~</span>
+                                    <input type="text" class="form-date-input" id="requestEndDateInput" max="{{ max_past_date }}" title="종료일 (최대 전일까지 선택 가능)" readonly placeholder="YYYY-MM-DD">
+                                    <select id="requestPresetSelect">
+                                        <option value="custom">직접 지정</option>
+                                        <option value="1" selected>최근 1일</option>
+                                        <option value="3">최근 3일</option>
+                                        <option value="7">최근 7일</option>
+                                        <option value="14">최근 14일</option>
+                                        <option value="30">최근 30일</option>
+                                    </select>
+                                    <button class="btn btn-primary" id="btnSearchRequests">
+                                        <i class="fa-solid fa-magnifying-glass"></i> 이력 조회
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="toolbar-right-group">
+                                <span id="requestsCountBadge" class="badge badge-purple">조회 대기 중</span>
+                                <div class="export-btn-group">
+                                    <button class="btn btn-secondary" id="btnExportRequestsCsv">
+                                        <i class="fa-solid fa-file-csv"></i> CSV
+                                    </button>
+                                    <button class="btn btn-secondary" id="btnExportRequestsExcel">
+                                        <i class="fa-solid fa-file-excel"></i> Excel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- KPI Summary Cards for Requests (4 Core KPI Cards) -->
+                        <div class="stats-kpi-grid mt-3 mb-3" style="grid-template-columns: repeat(4, 1fr);">
+                            <div class="stats-kpi-card highlight-red" title="조회 기간 내 정규 근무시간(08:00~17:00, 점심시간 12:15~12:45 제외) 전체 슬롯 중 실제 Denial이 발생한 병목 슬롯 비율">
+                                <span class="stats-kpi-label">Denial 발생 시간 비율</span>
+                                <div class="stats-kpi-val" id="kpiReqTotalCount">0.0%</div>
+                                <span class="stats-kpi-sub" id="kpiReqTotalSub">병목 슬롯: 0/0개 (일평균 0.0건 / 총 0건)</span>
+                            </div>
+                            <div class="stats-kpi-card highlight-orange" title="동일 조회 기간 내 전체 CATIA 실사용자 대비 라이선스 부족(Denial)을 경험한 고유 사용자 비율">
+                                <span class="stats-kpi-label">실사용자 대비 피해 경험률</span>
+                                <div class="stats-kpi-val" id="kpiReqUserCount">0.0% (0명)</div>
+                                <span class="stats-kpi-sub" id="kpiReqUserSub">실사용자 0명 중 (최다: - 0.0%)</span>
+                            </div>
+                            <div class="stats-kpi-card highlight-blue" title="15분 단위 슬롯 중 Denial 발생 시점의 평균 대기자 수 (평균 초과 수요)">
+                                <span class="stats-kpi-label">평균 초과 수요 (대기)</span>
+                                <div class="stats-kpi-val" id="kpiReqAvgWaiters">0.0명</div>
+                                <span class="stats-kpi-sub" id="kpiReqAvgWaitersSub">초과 발생 시 평균 대기자</span>
+                            </div>
+                            <div class="stats-kpi-card highlight-purple" title="단일 15분 슬롯 내 최대 동시 라이선스 거절 사용자 수 (피크 초과 수요)">
+                                <span class="stats-kpi-label">피크 동시 초과 (대기)</span>
+                                <div class="stats-kpi-val" id="kpiReqPeakWaiters">0명</div>
+                                <span class="stats-kpi-sub" id="kpiReqPeakWaitersSub">단일 슬롯 최대 동시 대기</span>
+                            </div>
+                        </div>
+
+                        <!-- Requests Timeseries Shortage Chart -->
+                        <div class="chart-container-card mb-4">
+                            <div class="chart-header">
+                                <div class="chart-title">
+                                    <i class="fa-solid fa-chart-column"></i>
+                                    <span>시간대별 Denial 발생 빈도 및 동시 대기(초과 수요) 인원 추이 (15분 단위)</span>
+                                </div>
+                                <div class="chart-legend-custom">
+                                    <span class="legend-badge badge-red">Denial 발생 건수 (건)</span>
+                                    <span class="legend-badge badge-purple">동시 대기 인원 (명)</span>
+                                </div>
+                            </div>
+                            <div class="chart-body" style="height: 240px; position: relative;">
+                                <canvas id="requestsChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                            <table class="data-table" id="requestsTable">
+                                <thead>
+                                    <tr>
+                                        <th>발생 일자</th>
+                                        <th>요청 시각 (시간 범위)</th>
+                                        <th style="text-align: center;">연속 재시도</th>
+                                        <th>소속 부서</th>
+                                        <th>성명</th>
+                                        <th>사번</th>
+                                        <th>장비명</th>
+                                        <th>IP</th>
+                                        <th>License</th>
+                                        <th>처리 상태</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="requestsBody">
+                                    <!-- Dynamic Server Log Rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div> <!-- /viewRequests -->
+
+        <!-- View 4: 3. License 권장 증설 예측 Dashboard -->
+        <div class="content-view" id="viewSimulation">
+            <!-- Accordion 4: 3. License 권장 증설 예측 Dashboard -->
+            <div class="accordion-item" id="accordionSimulationItem">
+                <div class="accordion-trigger" data-target="acc-simulation">
+                    <div class="trigger-title">
+                        <i class="fa-solid fa-chart-line"></i>
+                        <span><u>3. License 권장 증설 예측 Dashboard</u></span>
+                    </div>
+                    <i class="fa-solid fa-chevron-down accordion-icon"></i>
+                </div>
+                <div class="accordion-content" id="acc-simulation">
+                    <div class="accordion-inner">
+                        <!-- Toolbar: Analysis Range, Base Limit & Add Seats Stepper -->
+                        <div class="table-toolbar">
+                            <div class="toolbar-left-group">
+                                <div class="date-range-group">
+                                    <span class="date-label"><i class="fa-solid fa-calendar-days"></i> 분석 기간:</span>
+                                    <input type="text" class="form-date-input" id="simStartDateInput" max="{{ max_past_date }}" title="시작일 (최대 전일까지 선택 가능)" readonly placeholder="YYYY-MM-DD">
+                                    <span class="date-sep">~</span>
+                                    <input type="text" class="form-date-input" id="simEndDateInput" max="{{ max_past_date }}" title="종료일 (최대 전일까지 선택 가능)" readonly placeholder="YYYY-MM-DD">
+                                    <select id="simPresetSelect">
+                                        <option value="custom">직접 지정</option>
+                                        <option value="1" selected>최근 1일</option>
+                                        <option value="3">최근 3일</option>
+                                        <option value="7">최근 7일</option>
+                                        <option value="14">최근 14일</option>
+                                        <option value="30">최근 30일</option>
+                                    </select>
+                                    <button class="btn btn-primary" id="btnSearchSim">
+                                        <i class="fa-solid fa-magnifying-glass"></i> 예측 분석 실행
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="toolbar-right-group">
+                                <div class="sim-seat-controller" style="margin-right: 0.5rem;" title="현재 회사에서 계약하여 보유 중인 기준 License 수량 (기본값: 51 Copy)">
+                                    <span class="sim-controller-label"><i class="fa-solid fa-server"></i> 기준 보유량:</span>
+                                    <input type="number" id="simBaseLimitInput" min="1" max="200" value="51" class="sim-seat-number-input" title="기준 License 보유량 직접 입력 (기본: 51 Copy)">
+                                    <span class="sim-seat-unit">Copy</span>
+                                </div>
+
+                                <div class="sim-seat-controller" title="가상으로 증설하여 효과를 검증할 추가 License 수량 (+N Copy)">
+                                    <span class="sim-controller-label"><i class="fa-solid fa-plus-minus"></i> 가상 증설 수량:</span>
+                                    <button class="btn btn-secondary btn-sm" id="btnSimSeatDec" title="1 Copy 감소"><i class="fa-solid fa-minus"></i></button>
+                                    <input type="number" id="simSeatNumberInput" min="0" max="50" value="1" class="sim-seat-number-input" title="증설 Copy 수 직접 입력 (0~50)">
+                                    <span class="sim-seat-unit">Copy</span>
+                                    <button class="btn btn-secondary btn-sm" id="btnSimSeatInc" title="1 Copy 증가"><i class="fa-solid fa-plus"></i></button>
+                                    <input type="range" id="simSeatRange" min="0" max="30" step="1" value="1" class="sim-range-slider" title="증설 License 수 조절 (0~30+ Copy)">
+                                    <button class="btn btn-outline-success btn-sm ml-1" id="btnApplyOptimalSim" title="99% SLA 목표를 충족하는 권장 최적 Copy 수를 자동으로 슬라이더에 세팅">
+                                        <i class="fa-solid fa-wand-magic-sparkles"></i> 최적 권장값 적용 (Auto SLA)
+                                    </button>
+                                </div>
+
+                                <div class="export-btn-group">
+                                    <button class="btn btn-secondary" id="btnExportSimCsv">
+                                        <i class="fa-solid fa-file-csv"></i> CSV
+                                    </button>
+                                    <button class="btn btn-secondary" id="btnExportSimExcel">
+                                        <i class="fa-solid fa-file-excel"></i> Excel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- KPI Summary Cards for Simulation (3 Core KPI Cards) -->
+                        <div class="stats-kpi-grid mb-3" style="grid-template-columns: repeat(3, 1fr);">
+                            <div class="stats-kpi-card highlight-purple" title="동시 접속 점유량과 거절(Denial)된 추가 대기자 수를 모두 합산한 최대 동시 필요 수량">
+                                <span class="stats-kpi-label">피크 잠재수요 (Peak Demand)</span>
+                                <div class="stats-kpi-val" id="kpiSimPeakDemand">51개</div>
+                                <span class="stats-kpi-sub" id="kpiSimPeakDemandSub">기준 보유량 51개 대비 +0개 초과</span>
+                            </div>
+                            <div class="stats-kpi-card highlight-green" title="가상 증설 시 과거에 발생했던 Denial(라이선스 부족 거절) 중 정상 발급되어 구제/해결되는 비율">
+                                <span class="stats-kpi-label">거절 해소율 (Resolution Rate)</span>
+                                <div class="stats-kpi-val" id="kpiSimResolutionRate">100.0%</div>
+                                <span class="stats-kpi-sub" id="kpiSimResolutionRateSub">잔여 Denial 0건 / 총 관측 0건</span>
+                            </div>
+                            <div class="stats-kpi-card highlight-gold" title="일시적 이상 스파이크(상위 1%)를 제외하고 전체 업무시간의 99% 이상에서 무대기 즉시 접속(SLA)을 보장하는 최적 권장 증설 수량">
+                                <span class="stats-kpi-label">최적 권장증설 (99% SLA Target)</span>
+                                <div class="stats-kpi-val" id="kpiSimOptimalSeat">+0 Copy</div>
+                                <span class="stats-kpi-sub" id="kpiSimOptimalSeatSub">99% 백분위 잠재수요 충족 기준</span>
+                            </div>
+                        </div>
+
+                        <!-- Info Callout -->
+                        <div class="info-callout mb-3" id="simCalloutNotice">
+                            <i class="fa-solid fa-circle-info"></i>
+                            <span id="simCalloutNoticeText">※ 잠재 수요 곡선과 Simulation 증설 한도를 비교하여 Denial 해소율 및 투자 효과를 산출합니다.</span>
+                        </div>
+
+                        <!-- Metric Glossary & Business Guide Card -->
+                        <div class="sim-glossary-card">
+                            <div class="sim-glossary-header">
+                                <span><i class="fa-solid fa-book-open"></i> <b>License 증설 Simulation 핵심 지표 가이드</b> (Hover 또는 클릭하여 용어 확인)</span>
+                                <span class="badge badge-purple" style="font-size: 0.72rem;">용어 안내</span>
+                            </div>
+                            <div class="sim-glossary-grid">
+                                <div class="sim-glossary-item">
+                                    <div class="sim-glossary-title"><i class="fa-solid fa-server text-blue"></i> 기준 보유량 (Base Limit)</div>
+                                    <div class="sim-glossary-desc">현재 회사에서 정식 계약하여 사용 가능한 기본 License 수량입니다. (기본: 51 Copy, 임대 계약 시 71 Copy 등 수치 변경 가능)</div>
+                                </div>
+                                <div class="sim-glossary-item">
+                                    <div class="sim-glossary-title"><i class="fa-solid fa-chart-line text-purple"></i> 피크 잠재수요 (Peak Demand)</div>
+                                    <div class="sim-glossary-desc">실제 CATIA 실행 점유자 수 + 라이선스가 모자라 거절(Denial)된 대기자 수를 모두 합산한 총 동시 접속 희망 수량입니다.</div>
+                                </div>
+                                <div class="sim-glossary-item">
+                                    <div class="sim-glossary-title"><i class="fa-solid fa-shield-halved text-green"></i> 거절 해소율 (Resolution Rate)</div>
+                                    <div class="sim-glossary-desc">가상 증설을 적용했을 때, 과거 발생했던 Denial 중 라이선스를 정상 발급받아 병목이 해결되는 비율(%)입니다. 100%면 부족이 0건이 됩니다.</div>
+                                </div>
+                                <div class="sim-glossary-item">
+                                    <div class="sim-glossary-title"><i class="fa-solid fa-award text-gold"></i> 최적 권장증설 (99% SLA Target)</div>
+                                    <div class="sim-glossary-desc"><b>SLA(Service Level Agreement)</b>: 엔지니어가 대기 없이 즉시 접속 가능한 신뢰도입니다. 상위 1% 일시 스파이크를 제외하고 99%의 업무 시간에서 Denial 0건을 달성하는 최적 구매선입니다.</div>
+                                </div>
+                                <div class="sim-glossary-item">
+                                    <div class="sim-glossary-title"><i class="fa-solid fa-scale-balanced text-teal"></i> 의사결정 판정 (Decision Grade)</div>
+                                    <div class="sim-glossary-desc">투자 비용 대비 효율 판정입니다. <b>최적 권장(Optimal SLA)</b>, <b>100% 완전 해소(Zero Denial)</b>, <b>초과 증설(Surplus Capacity, 과투자 유의)</b> 등으로 분류됩니다.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Simulation Timeseries Chart -->
+                        <div class="chart-container-card mb-4">
+                            <div class="chart-header">
+                                <div class="chart-title">
+                                    <i class="fa-solid fa-chart-area"></i>
+                                    <span>시간대별 Peak 잠재 수요 vs Simulation 수용량 비교 (15분 단위)</span>
+                                </div>
+                                <div class="chart-legend-custom">
+                                    <span class="legend-badge badge-red">최대 Peak 잠재 수요</span>
+                                    <span class="legend-badge badge-green">Simulation 점유</span>
+                                    <span class="legend-badge badge-purple">가상 한도선</span>
+                                </div>
+                            </div>
+                            <div class="chart-body" style="height: 320px; position: relative;">
+                                <canvas id="simChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Scenario Comparative Table -->
+                        <div class="section-subtitle mt-3 mb-2">
+                            <i class="fa-solid fa-table-list"></i>
+                            <span><b>증설 규모별 Scenario 종합 비교표 <span id="simScenarioRangeSubtitle">(+0 ~ +10 Copy)</span></b></span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="data-table" id="simScenarioTable">
+                                <thead>
+                                    <tr>
+                                        <th title="가상으로 추가 도입할 License 수량">증설 Scenario</th>
+                                        <th title="기준 보유량 + 증설 수량">총 License 한도</th>
+                                        <th title="증설 후에도 License가 부족하여 잔여하는 거절 건수">잔여 Denial</th>
+                                        <th title="증설을 통해 정상 발급되어 해결된 거절 건수">해소 Denial</th>
+                                        <th title="전체 Denial 중 해결된 비율 (%)">Denial 해소율 (%)</th>
+                                        <th title="전체 업무시간 99% 이상 무대기 접속 만족 여부">99% SLA 충족</th>
+                                        <th title="투자 대비 효과성 판정 등급">의사결정 판정</th>
+                                        <th title="해당 시나리오를 상단 시뮬레이터에 즉시 반영">Simulation 적용</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="simScenarioBody">
+                                    <!-- Dynamic Scenario Rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div> <!-- /viewSimulation -->
+
+        <!-- View 5: 4. 사용자별 점유 집계 Pivot & 15분 Slot Matrix -->
+        <div class="content-view" id="viewPivot">
+            <!-- Accordion 5: 4. 사용자별 점유 집계 Pivot & 15분 Slot Matrix (상세 참조용) -->
+            <div class="accordion-item" id="accordionPivotItem">
+                <div class="accordion-trigger" data-target="acc-realtime">
+                    <div class="trigger-title">
+                        <i class="fa-solid fa-users-viewfinder"></i>
+                        <span><u>4. 사용자별 점유 집계 Pivot & 15분 Slot Matrix</u></span>
+                        <span class="badge badge-light ml-2" style="font-size: 0.75rem; font-weight: normal;">15분 집계용</span>
+                    </div>
+                    <i class="fa-solid fa-chevron-down accordion-icon"></i>
+                </div>
+                <div class="accordion-content" id="acc-realtime">
+                    <div class="accordion-inner">
+                        <!-- Multi-Date Selector & Toolbar -->
+                        <div class="table-toolbar">
+                            <div class="toolbar-left-group">
+                                <div class="date-range-group">
+                                    <span class="date-label"><i class="fa-solid fa-calendar-days"></i> 기간 선택:</span>
+                                    <input type="text" class="form-date-input" id="pivotStartDateInput" title="시작일" readonly placeholder="YYYY-MM-DD">
+                                    <span class="date-sep">~</span>
+                                    <input type="text" class="form-date-input" id="pivotEndDateInput" title="종료일" readonly placeholder="YYYY-MM-DD">
+                                    <select id="pivotPresetSelect">
+                                        <option value="custom">직접 지정</option>
+                                        <option value="1" selected>최근 1일</option>
+                                        <option value="3">최근 3일</option>
+                                        <option value="7">최근 7일</option>
+                                        <option value="14">최근 14일</option>
+                                        <option value="30">최근 30일</option>
+                                    </select>
+                                    <button class="btn btn-primary" id="btnSearchPivot">
+                                        <i class="fa-solid fa-magnifying-glass"></i> 조회
+                                    </button>
+                                </div>
+                                <div class="search-box">
+                                    <i class="fa-solid fa-magnifying-glass"></i>
+                                    <input type="text" id="searchInput" placeholder="사용자명, 사번, 장비명, IP...">
+                                </div>
+                                <div class="filter-box">
+                                    <select id="filterDept">
+                                        <option value="ALL">전체 부서</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="toolbar-right-group">
+                                <div class="tab-toggle-group">
+                                    <button class="btn-tab active" id="btnTabPivotSummary" data-pivot-subview="summary">
+                                        <i class="fa-solid fa-table-list"></i> 기간 요약 Pivot (집계용)
+                                    </button>
+                                    <button class="btn-tab" id="btnTabPivotSlots" data-pivot-subview="slots">
+                                        <i class="fa-solid fa-table-cells"></i> 15분 상세 Slot Matrix (집계용)
+                                    </button>
+                                </div>
+                                <div class="export-btn-group">
+                                    <button class="btn btn-secondary" id="btnExportPivotCsv">
+                                        <i class="fa-solid fa-file-csv"></i> CSV
+                                    </button>
+                                    <button class="btn btn-secondary" id="btnExportPivotExcel">
+                                        <i class="fa-solid fa-file-excel"></i> Excel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Date Summary Notice Callout -->
+                        <div class="info-callout" id="pivotDateNotice">
+                            <i class="fa-solid fa-circle-info"></i>
+                            <span id="pivotDateNoticeText">선택한 기간의 사용자별 점유 시간대 데이터를 분석 중입니다...</span>
+                        </div>
+
+                        <!-- Subview 1: Multi-Date Summary Pivot Table (Hours by Date) -->
+                        <div class="view-panel active" id="viewPivotSummaryContainer">
+                            <div class="panel-sub-header">
+                                <h4><i class="fa-solid fa-table"></i> 기간 사용자 점유 요약 Pivot (집계용)</h4>
+                                <span id="pivotSummaryCountBadge" class="badge badge-purple">총 0명</span>
+                            </div>
+                            <div class="pivot-matrix-scroll-wrapper">
+                                <table class="data-table pivot-matrix-table" id="pivotSummaryTable">
+                                    <thead id="pivotSummaryThead">
+                                        <!-- Dynamic: Dept, User, Emp, Host, IP, Total Hours, Active Days, Avg/Day, [Date Columns...] -->
+                                    </thead>
+                                    <tbody id="pivotSummaryTbody">
+                                        <!-- Dynamic Multi-Date User Rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Subview 2: Detailed 15m Slot Matrix (08:00 ~ 17:00) with Date Chips -->
+                        <div class="view-panel" id="viewPivotSlotsContainer" style="display: none;">
+                            <div class="panel-sub-header">
+                                <div>
+                                    <h4><i class="fa-solid fa-clock"></i> 15분 단위 사용자별 점유 Matrix (집계용)</h4>
+                                    <div class="date-chips-wrapper mt-2" id="pivotDateChipsWrapper">
+                                        <!-- Dynamic Date Chip Buttons -->
+                                    </div>
+                                </div>
+                                <span id="pivotSlotsCountBadge" class="badge badge-blue">선택 일자: --</span>
+                            </div>
+                            <div class="pivot-matrix-scroll-wrapper mt-2">
+                                <table class="data-table pivot-matrix-table" id="pivotSlotsTable">
+                                    <thead id="pivotSlotsThead">
+                                        <!-- Dynamic Slots 08:00 ~ 17:00 -->
+                                    </thead>
+                                    <tbody id="pivotSlotsTbody">
+                                        <!-- Dynamic Rows -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Dept Summary Breakdown -->
+                        <div class="dept-summary-grid mt-3">
+                            <div class="dept-summary-card">
+                                <h5><i class="fa-solid fa-chart-column"></i> 부서별 점유 요약</h5>
+                                <div class="table-responsive" style="max-height: 240px; overflow-y: auto;">
+                                    <table class="data-table small-table" id="deptSummaryTable">
+                                        <thead>
+                                            <tr>
+                                                <th>부서명</th>
+                                                <th>사용 인원</th>
+                                                <th>총 점유 시간(h)</th>
+                                                <th>인당 평균(h)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="deptSummaryTbody">
+                                            <!-- Dynamic Dept Rows -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div> <!-- /viewPivot -->
+    </div> <!-- /content-views-wrapper -->
+</main> <!-- /app-main-content -->
+</div> <!-- /app-layout -->
+
+    <!-- Backend Context Injection -->
+    <script>
+        window.AVAILABLE_DATES = {{ available_dates | tojson }};
+        window.DEFAULT_DATE = "{{ default_date }}";
+        window.MAX_PAST_DATE = "{{ max_past_date }}";
+    </script>
+    <!-- Flatpickr Vendor Scripts -->
+    <script src="/static/vendor/flatpickr.min.js"></script>
+    <script src="/static/vendor/flatpickr.ko.js"></script>
+    <!-- Main JS Application -->
+    <script src="/static/js/main.js?v=5.2"></script>
+</body>
+</html>
