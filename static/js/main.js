@@ -1471,6 +1471,8 @@ const StatsModule = {
     currentDeptMode: 'top6', // 'top6' | 'all'
     mainChart: null,
     deptChart: null,
+    loadTierChart: null,
+    activeLoadTier: 'critical', // 'critical' | 'warning' | 'normal'
     isSearching: false,
     lastFetchedAt: 0,
 
@@ -2023,7 +2025,7 @@ const StatsModule = {
             }
 
             return `
-                <tr class="${isPeak ? 'row-peak-warning' : ''}">
+                <tr class="${isPeak ? 'row-peak-warning' : ''}" data-slot-time="${s.time}">
                     <td class="font-mono font-bold text-dark">${s.time}</td>
                     <td class="font-mono font-bold text-primary">${avgVal}개</td>
                     <td class="font-mono font-bold text-danger">${peakVal}개</td>
@@ -2135,7 +2137,7 @@ const StatsModule = {
             return;
         }
 
-        const timeHeaders = series15m.map(s => `<th>${s.time}</th>`).join('');
+        const timeHeaders = series15m.map(s => `<th data-slot-time="${s.time}">${s.time}</th>`).join('');
         thead.innerHTML = `
             <tr>
                 <th class="sticky-col-date">일자</th>
@@ -2156,17 +2158,17 @@ const StatsModule = {
                 const val = byDate[dateYmd];
 
                 if (val === null || val === undefined) {
-                    return '<td><span class="text-muted" style="opacity:0.3;">-</span></td>';
+                    return `<td data-slot-time="${s.time}"><span class="text-muted" style="opacity:0.3;">-</span></td>`;
                 }
 
                 if (val >= critThresh) {
-                    return `<td><span class="matrix-cell-peak-50" title="${d.date} ${s.time}: ${val}개 (${critThresh}개 이상 포화)">${val}</span></td>`;
+                    return `<td data-slot-time="${s.time}"><span class="matrix-cell-peak-50" title="${d.date} ${s.time}: ${val}개 (${critThresh}개 이상 포화)">${val}</span></td>`;
                 } else if (val >= warnThresh) {
-                    return `<td><span class="matrix-cell-warning-45" title="${d.date} ${s.time}: ${val}개 (피크 주의)">${val}</span></td>`;
+                    return `<td data-slot-time="${s.time}"><span class="matrix-cell-warning-45" title="${d.date} ${s.time}: ${val}개 (피크 주의)">${val}</span></td>`;
                 } else if (val > 0) {
-                    return `<td><span class="matrix-cell-normal font-mono">${val}</span></td>`;
+                    return `<td data-slot-time="${s.time}"><span class="matrix-cell-normal font-mono">${val}</span></td>`;
                 } else {
-                    return '<td><span class="text-muted" style="opacity:0.35;">0</span></td>';
+                    return `<td data-slot-time="${s.time}"><span class="text-muted" style="opacity:0.35;">0</span></td>`;
                 }
             }).join('');
 
@@ -2218,29 +2220,440 @@ const StatsModule = {
         }).join('');
     },
 
-    renderInsights() {
-        const listEl = document.getElementById('peakSummaryList');
-        if (!listEl || !this.rawData) return;
+    focusTimeSlot(slotTime, tierKey = 'critical') {
+        if (!slotTime) return;
+        // If current view is daily or hourly, switch to matrix view so the 15m slot can be inspected directly
+        if (this.currentViewMode !== 'matrix' && this.currentViewMode !== '15m') {
+            const matrixTab = document.querySelector('#accordionStatsItem .btn-tab[data-stat-view="matrix"]');
+            if (matrixTab) matrixTab.click();
+        }
 
-        const p = this.rawData.peak_summary || {};
-        const pMax = p.period_max || {};
-        const topDept = p.top_dept || {};
+        const hlMap = {
+            critical: { bg: 'rgba(239, 68, 68, 0.24)', border: '#ef4444' },
+            warning: { bg: 'rgba(245, 158, 11, 0.24)', border: '#f59e0b' },
+            normal: { bg: 'rgba(16, 185, 129, 0.24)', border: '#10b981' }
+        };
+        const hl = hlMap[tierKey] || hlMap.critical;
 
-        if (!pMax.usage || pMax.usage === 0) {
-            listEl.innerHTML = `
-                <li>선택하신 기간에는 License 사용 이력이 존재하지 않습니다 (주말/공휴일 또는 미가동).</li>
-                <li>정규 근무시간(08:00~17:00) 점유량 및 동시 사용자 수가 모두 0건(0.0%)입니다.</li>
-            `;
+        if (this.currentViewMode === '15m') {
+            const container = document.getElementById('view15mStatsTable');
+            const targetRow = container?.querySelector(`tr[data-slot-time="${slotTime}"]`);
+            if (targetRow) {
+                targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                targetRow.style.transition = 'background-color 0.3s ease, box-shadow 0.3s ease';
+                const prevBg = targetRow.style.backgroundColor;
+                targetRow.style.backgroundColor = hl.bg;
+                targetRow.style.boxShadow = `inset 0 0 0 1px ${hl.border}`;
+                setTimeout(() => {
+                    targetRow.style.backgroundColor = prevBg;
+                    targetRow.style.boxShadow = '';
+                }, 1800);
+            }
             return;
         }
 
-        const topHours = topDept.total_hours !== undefined ? topDept.total_hours : ((topDept.count || 0) * 0.25);
-        listEl.innerHTML = `
-            <li>조회 기간 내 50개 이상 사용 비율은 <strong>${p.period_over_50_pct || 0}%</strong>를 차지하였습니다.</li>
-            <li>50개 이상 사용 비율이 <strong>60% 이상</strong>인 고부하 일수는 조회 기간 총 <strong>${p.total_days_count || 0}일</strong> 중 <strong>${p.days_over_60_pct_count || 0}일</strong> (${p.days_over_60_pct_rate || 0}%)입니다.</li>
-            <li>정규 근무시간(08:00~17:00) 전체 평균 점유량은 <strong>${p.work_hours_avg || 0}개</strong> (가동률 ${p.work_hours_rate || 0}%)입니다.</li>
-            <li>최다 License 점유 부서는 <strong>${topDept.dept_name || '-'}</strong> (누적 점유시간 <strong>${topHours}h</strong>, 비중 ${topDept.share_pct || 0}%)입니다.</li>
+        const matrixContainer = document.getElementById('viewMatrixStatsTable');
+        const targetTh = matrixContainer?.querySelector(`th[data-slot-time="${slotTime}"]`);
+        const targetCells = matrixContainer?.querySelectorAll(`td[data-slot-time="${slotTime}"]`);
+        if (matrixContainer && targetTh) {
+            targetTh.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+            const allTargets = [targetTh, ...(targetCells || [])];
+            allTargets.forEach(el => {
+                el.style.transition = 'background-color 0.3s ease, box-shadow 0.3s ease';
+                el.style.backgroundColor = hl.bg;
+                el.style.boxShadow = `inset 0 0 0 1px ${hl.border}`;
+            });
+            setTimeout(() => {
+                allTargets.forEach(el => {
+                    el.style.backgroundColor = '';
+                    el.style.boxShadow = '';
+                });
+            }, 1800);
+        }
+    },
+
+    renderInsights(options = {}) {
+        const canvas = document.getElementById('statsLoadTierChart');
+        const wrapper = document.getElementById('statsLoadAnalysisWrapper');
+        const spareBadge = document.getElementById('statsLoadSpareBadge');
+        if (!wrapper || !this.rawData) return;
+
+        const skipChart = Boolean(options && options.skipChart);
+        if (!skipChart && this.loadTierChart) {
+            this.loadTierChart.destroy();
+            this.loadTierChart = null;
+        }
+
+        const p = this.rawData.peak_summary || {};
+        const pMax = p.period_max || {};
+        const totalLimit = this.rawData.total_limit || 51;
+        const critThresh = this.rawData.critical_threshold !== undefined ? this.rawData.critical_threshold : (totalLimit - 1);
+        const warnThresh = this.rawData.warning_threshold !== undefined ? this.rawData.warning_threshold : (totalLimit - 6);
+
+        if (!pMax.usage || pMax.usage === 0) {
+            if (this.loadTierChart) {
+                this.loadTierChart.destroy();
+                this.loadTierChart = null;
+            }
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+            if (spareBadge) {
+                spareBadge.className = 'badge badge-secondary';
+                spareBadge.textContent = '사용 이력 없음';
+            }
+            wrapper.innerHTML = '<div class="text-muted text-xs p-3">선택하신 기간에는 License 사용 이력이 존재하지 않습니다 (주말/공휴일 또는 미가동).</div>';
+            return;
+        }
+
+        const la = this.rawData.load_analysis || {};
+        const series15m = this.rawData.time_series_15m || [];
+
+        // Client-side fallback calculation if load_analysis or top_slots_by_tier is absent
+        let tiers = la.tiers;
+        let topSlotsByTier = la.top_slots_by_tier;
+        let mCritPct = la.morning_critical_pct;
+        let aCritPct = la.afternoon_critical_pct;
+        let dominantPeriod = la.dominant_period;
+        let avgSpareSeats = la.avg_spare_seats;
+
+        if (!Array.isArray(tiers) || tiers.length === 0 || !topSlotsByTier) {
+            let critCount = 0;
+            let warnCount = 0;
+            let normCount = 0;
+            let mTotal = 0;
+            let aTotal = 0;
+            let mCrit = 0;
+            let aCrit = 0;
+            const candidates = [];
+
+            series15m.forEach(s => {
+                if (s.time > '12:00' && s.time < '13:00') return; // 점심시간 제외
+                const byDate = s.by_date || {};
+                const vals = Object.values(byDate).filter(v => v !== null && v !== undefined);
+                if (vals.length === 0) return;
+
+                let sCrit = 0;
+                let sWarn = 0;
+                let sNorm = 0;
+                vals.forEach(v => {
+                    if (v >= critThresh) {
+                        critCount++;
+                        sCrit++;
+                        if (s.time <= '12:00') mCrit++;
+                        else if (s.time >= '13:00') aCrit++;
+                    } else if (v >= warnThresh) {
+                        warnCount++;
+                        sWarn++;
+                    } else {
+                        normCount++;
+                        sNorm++;
+                    }
+                    if (s.time <= '12:00') mTotal++;
+                    else if (s.time >= '13:00') aTotal++;
+                });
+
+                const mDays = vals.length;
+                const sAvg = Number((vals.reduce((a, b) => a + b, 0) / mDays).toFixed(1));
+                const sPeak = Math.max(...vals);
+                const sMin = Math.min(...vals);
+                if (sPeak > 0) {
+                    candidates.push({
+                        time: s.time,
+                        period_tag: s.time <= '12:00' ? '오전' : '오후',
+                        measured_days: mDays,
+                        critical_days: sCrit,
+                        warning_days: sWarn,
+                        normal_days: sNorm,
+                        high_load_days: sCrit + sWarn,
+                        critical_rate_pct: Number(((sCrit / mDays) * 100).toFixed(1)),
+                        warning_rate_pct: Number(((sWarn / mDays) * 100).toFixed(1)),
+                        normal_rate_pct: Number(((sNorm / mDays) * 100).toFixed(1)),
+                        high_load_rate_pct: Number((((sCrit + sWarn) / mDays) * 100).toFixed(1)),
+                        avg_usage: sAvg,
+                        peak_usage: sPeak,
+                        min_usage: sMin,
+                        spare_avg: Number(Math.max(0, totalLimit - sAvg).toFixed(1)),
+                        avg_rate_pct: Number(((sAvg / totalLimit) * 100).toFixed(1))
+                    });
+                }
+            });
+
+            if (!Array.isArray(tiers) || tiers.length === 0) {
+                const totalValid = critCount + warnCount + normCount;
+                tiers = [
+                    {
+                        key: 'critical',
+                        label: `포화·임계 (${critThresh}~${totalLimit}개)`,
+                        short_label: `포화 (${critThresh}+)`,
+                        desc: `여유 0~${Math.max(0, totalLimit - critThresh)}석 · 초과 요청 위험 구간`,
+                        slot_count: critCount,
+                        hours: Number((critCount * 0.25).toFixed(2)),
+                        share_pct: totalValid > 0 ? Number(((critCount / totalValid) * 100).toFixed(1)) : 0.0
+                    },
+                    {
+                        key: 'warning',
+                        label: `고부하·주의 (${warnThresh}~${critThresh - 1}개)`,
+                        short_label: `주의 (${warnThresh}~${critThresh - 1})`,
+                        desc: `여유 ${Math.max(1, totalLimit - critThresh + 1)}~${Math.max(1, totalLimit - warnThresh)}석 · 피크 근접 구간`,
+                        slot_count: warnCount,
+                        hours: Number((warnCount * 0.25).toFixed(2)),
+                        share_pct: totalValid > 0 ? Number(((warnCount / totalValid) * 100).toFixed(1)) : 0.0
+                    },
+                    {
+                        key: 'normal',
+                        label: `안정·여유 (${warnThresh - 1}개 이하)`,
+                        short_label: `안정 (≤${warnThresh - 1})`,
+                        desc: `여유 ${Math.max(1, totalLimit - warnThresh + 1)}석 이상 · 원활 운영 구간`,
+                        slot_count: normCount,
+                        hours: Number((normCount * 0.25).toFixed(2)),
+                        share_pct: totalValid > 0 ? Number(((normCount / totalValid) * 100).toFixed(1)) : 0.0
+                    }
+                ];
+            }
+
+            topSlotsByTier = {
+                critical: [...candidates].sort((a, b) =>
+                    (b.critical_days - a.critical_days) ||
+                    (b.high_load_days - a.high_load_days) ||
+                    (b.avg_usage - a.avg_usage) ||
+                    (b.peak_usage - a.peak_usage) ||
+                    a.time.localeCompare(b.time)
+                ).slice(0, 5),
+                warning: [...candidates].sort((a, b) =>
+                    (b.warning_days - a.warning_days) ||
+                    (b.high_load_days - a.high_load_days) ||
+                    (b.avg_usage - a.avg_usage) ||
+                    (b.peak_usage - a.peak_usage) ||
+                    a.time.localeCompare(b.time)
+                ).slice(0, 5),
+                normal: [...candidates].sort((a, b) =>
+                    (b.normal_days - a.normal_days) ||
+                    (a.avg_usage - b.avg_usage) ||
+                    (a.min_usage - b.min_usage) ||
+                    a.time.localeCompare(b.time)
+                ).slice(0, 5)
+            };
+
+            if (mCritPct === undefined) mCritPct = mTotal > 0 ? Number(((mCrit / mTotal) * 100).toFixed(1)) : 0.0;
+            if (aCritPct === undefined) aCritPct = aTotal > 0 ? Number(((aCrit / aTotal) * 100).toFixed(1)) : 0.0;
+            if (!dominantPeriod) dominantPeriod = aCritPct > mCritPct ? '오후 집중' : (mCritPct > aCritPct ? '오전 집중' : '오전·오후 균등');
+            if (avgSpareSeats === undefined) avgSpareSeats = Number(Math.max(0, totalLimit - (p.work_hours_avg || 0)).toFixed(1));
+        }
+
+        const critTier = tiers.find(t => t.key === 'critical') || { share_pct: 0, slot_count: 0 };
+        if (spareBadge) {
+            if (critTier.share_pct >= 50) {
+                spareBadge.className = 'badge badge-danger';
+            } else if (critTier.share_pct >= 20) {
+                spareBadge.className = 'badge badge-warning';
+            } else {
+                spareBadge.className = 'badge badge-purple';
+            }
+            spareBadge.textContent = `평균 여유 ${avgSpareSeats}석 · ${dominantPeriod}`;
+        }
+
+        const tierColors = {
+            critical: '#ef4444',
+            warning: '#f59e0b',
+            normal: '#10b981'
+        };
+        const tierActiveBgs = {
+            critical: 'rgba(239, 68, 68, 0.14)',
+            warning: 'rgba(245, 158, 11, 0.14)',
+            normal: 'rgba(16, 185, 129, 0.14)'
+        };
+
+        if (!skipChart && canvas) {
+            const ctx = canvas.getContext('2d');
+            this.loadTierChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: tiers.map(t => t.label),
+                    datasets: [{
+                        data: tiers.map(t => t.slot_count),
+                        backgroundColor: tiers.map(t => tierColors[t.key] || '#64748b'),
+                        borderWidth: 1,
+                        borderColor: '#ffffff',
+                        hoverOffset: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
+                    onClick: (_evt, elements) => {
+                        if (elements && elements.length > 0) {
+                            const clickedTier = tiers[elements[0].index];
+                            if (clickedTier && clickedTier.key) {
+                                this.activeLoadTier = clickedTier.key;
+                                this.renderInsights({ skipChart: true });
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label(context) {
+                                    const t = tiers[context.dataIndex];
+                                    if (!t) return '';
+                                    return ` ${t.label}: ${t.slot_count}슬롯 (${t.share_pct}% · ${t.hours}h)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        const activeTier = ['critical', 'warning', 'normal'].includes(this.activeLoadTier)
+            ? this.activeLoadTier
+            : 'critical';
+        const activeSlots = (topSlotsByTier && topSlotsByTier[activeTier]) || la.hotspot_slots || [];
+        const activeThemeColor = tierColors[activeTier] || '#ef4444';
+        const activeThemeBg = tierActiveBgs[activeTier] || 'rgba(239, 68, 68, 0.14)';
+
+        const tierHeaderConfig = {
+            critical: {
+                icon: 'fa-solid fa-bolt',
+                color: '#ef4444',
+                title: `포화(${critThresh}+) 상습 병목 타임슬롯 Top 5`,
+                rightMeta: `포화율: 오전 <strong>${mCritPct}%</strong> · 오후 <strong>${aCritPct}%</strong>`,
+                rightTitle: `오전(08:30~12:00) vs 오후(13:00~17:45) ${critThresh}개 이상 포화 발생 비율`
+            },
+            warning: {
+                icon: 'fa-solid fa-triangle-exclamation',
+                color: '#f59e0b',
+                title: `주의(${warnThresh}~${critThresh - 1}) 빈발 타임슬롯 Top 5`,
+                rightMeta: `여유 ${Math.max(1, totalLimit - critThresh + 1)}~${Math.max(1, totalLimit - warnThresh)}석 구간`,
+                rightTitle: `점유 수량 ${warnThresh}~${critThresh - 1}개 (피크 근접 주의 구간) 최다 발생 시간대`
+            },
+            normal: {
+                icon: 'fa-solid fa-shield-heart',
+                color: '#10b981',
+                title: `안정·여유(≤${warnThresh - 1}) 타임슬롯 Top 5`,
+                rightMeta: `여유 ${Math.max(1, totalLimit - warnThresh + 1)}석+ 원활 구간`,
+                rightTitle: `점유 수량 ${warnThresh - 1}개 이하로 여유 좌석이 가장 넉넉한 시간대`
+            }
+        };
+        const headerCfg = tierHeaderConfig[activeTier] || tierHeaderConfig.critical;
+
+        const hotspotHtml = activeSlots.length > 0
+            ? activeSlots.map((hs, idx) => {
+                let badgeColor = activeThemeColor;
+                let badgeBg = activeThemeBg;
+                let freqText = '';
+                let statsText = `평균 <strong>${hs.avg_usage}</strong> · 최대 <strong>${hs.peak_usage}</strong>`;
+
+                if (activeTier === 'critical') {
+                    const isCrit = hs.critical_days > 0;
+                    const isWarn = !isCrit && hs.warning_days > 0;
+                    badgeColor = isCrit ? '#ef4444' : (isWarn ? '#f59e0b' : '#3b82f6');
+                    badgeBg = isCrit ? 'rgba(239,68,68,0.14)' : (isWarn ? 'rgba(245,158,11,0.14)' : 'rgba(59,130,246,0.14)');
+                    freqText = isCrit
+                        ? `${critThresh}+ ${hs.critical_days}/${hs.measured_days}일 (${hs.critical_rate_pct}%)`
+                        : (isWarn
+                            ? `주의 ${hs.warning_days}/${hs.measured_days}일 (${hs.high_load_rate_pct}%)`
+                            : `평균 가동 ${hs.avg_rate_pct}%`);
+                } else if (activeTier === 'warning') {
+                    const hasWarn = hs.warning_days > 0;
+                    const warnRate = hs.warning_rate_pct !== undefined
+                        ? hs.warning_rate_pct
+                        : Number(((hs.warning_days / hs.measured_days) * 100).toFixed(1));
+                    badgeColor = hasWarn ? '#f59e0b' : (hs.critical_days > 0 ? '#ef4444' : '#3b82f6');
+                    badgeBg = hasWarn ? 'rgba(245,158,11,0.14)' : (hs.critical_days > 0 ? 'rgba(239,68,68,0.14)' : 'rgba(59,130,246,0.14)');
+                    freqText = hasWarn
+                        ? `주의 ${hs.warning_days}/${hs.measured_days}일 (${warnRate}%)`
+                        : (hs.high_load_days > 0
+                            ? `고부하 ${hs.high_load_days}/${hs.measured_days}일 (${hs.high_load_rate_pct}%)`
+                            : `평균 가동 ${hs.avg_rate_pct}%`);
+                } else {
+                    const normDays = hs.normal_days !== undefined
+                        ? hs.normal_days
+                        : Math.max(0, hs.measured_days - (hs.high_load_days || 0));
+                    const normRate = hs.normal_rate_pct !== undefined
+                        ? hs.normal_rate_pct
+                        : Number(((normDays / hs.measured_days) * 100).toFixed(1));
+                    const spareAvg = hs.spare_avg !== undefined
+                        ? hs.spare_avg
+                        : Number(Math.max(0, totalLimit - hs.avg_usage).toFixed(1));
+                    badgeColor = '#10b981';
+                    badgeBg = 'rgba(16,185,129,0.14)';
+                    freqText = `안정 ${normDays}/${hs.measured_days}일 (${normRate}%)`;
+                    statsText = `평균 <strong>${hs.avg_usage}</strong> · 여유 <strong>+${spareAvg}석</strong>`;
+                }
+
+                return `
+                    <div class="stats-hotspot-item" data-slot-time="${Utils.escapeHtml(hs.time)}" title="클릭 시 상단 통계 표에서 '${Utils.escapeHtml(hs.time)}' 시간대 열/행으로 즉시 이동하여 하이라이트합니다." style="display:flex; align-items:center; justify-content:space-between; padding:3px 6px; border-radius:4px; background:rgba(128,128,128,0.05); cursor:pointer; font-size:11px; transition:background 0.15s ease;">
+                        <div style="display:flex; align-items:center; gap:5px; min-width:0;">
+                            <span class="font-mono" style="display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:3px; background:${badgeBg}; color:${badgeColor}; font-weight:700; font-size:10px; flex-shrink:0;">${idx + 1}</span>
+                            <span class="font-mono font-bold" style="color:var(--text-main);">${Utils.escapeHtml(hs.time)}</span>
+                            <span class="text-muted" style="font-size:10px;">(${Utils.escapeHtml(hs.period_tag)})</span>
+                        </div>
+                        <div class="font-mono" style="display:flex; align-items:center; gap:6px; flex-shrink:0; font-size:10.5px;">
+                            <span style="color:${badgeColor}; font-weight:600;">${freqText}</span>
+                            <span class="text-muted">${statsText}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('')
+            : '<div class="text-muted text-xs">해당 부하 구간의 타임슬롯 데이터가 없습니다.</div>';
+
+        wrapper.innerHTML = `
+            <div style="display:flex; flex-direction:column; height:100%; justify-content:space-between; gap:6px;">
+                <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:4px;">
+                    ${tiers.map(t => {
+                        const color = tierColors[t.key] || '#64748b';
+                        const isSelected = t.key === activeTier;
+                        const chipStyle = isSelected
+                            ? `background:${tierActiveBgs[t.key] || 'rgba(128,128,128,0.12)'}; border:1px solid ${color}; border-left:3px solid ${color}; box-shadow:0 1px 4px rgba(0,0,0,0.08);`
+                            : `background:rgba(128,128,128,0.05); border:1px solid transparent; border-left:3px solid ${color}; opacity:0.82;`;
+                        return `
+                            <div class="stats-tier-chip" data-tier-key="${t.key}" style="padding:4px 6px; border-radius:5px; cursor:pointer; user-select:none; transition:all 0.15s ease; ${chipStyle}">
+                                <div style="font-size:10px; font-weight:${isSelected ? '700' : '500'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${Utils.escapeHtml(t.short_label || t.label)}</div>
+                                <div class="font-mono" style="font-size:11.5px; font-weight:700; color:${color};">${t.share_pct}% <span style="font-size:9.5px; font-weight:400; color:var(--text-muted);">(${t.slot_count})</span></div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                <div style="display:flex; flex-direction:column; gap:3px; flex:1; min-height:0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; font-size:10.5px; padding:0 2px;">
+                        <span style="font-weight:700; color:var(--text-main);"><i class="${headerCfg.icon}" style="color:${headerCfg.color};"></i> ${headerCfg.title}</span>
+                        <span class="font-mono text-muted" style="font-size:10px;" title="${Utils.escapeHtml(headerCfg.rightTitle)}">${headerCfg.rightMeta}</span>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:3px; overflow-y:auto;">
+                        ${hotspotHtml}
+                    </div>
+                </div>
+            </div>
         `;
+
+        // Interactive click on tier chips -> switch Top 5
+        wrapper.querySelectorAll('.stats-tier-chip').forEach(chip => {
+            const tKey = chip.getAttribute('data-tier-key');
+            chip.addEventListener('click', () => {
+                if (tKey && this.activeLoadTier !== tKey) {
+                    this.activeLoadTier = tKey;
+                    this.renderInsights({ skipChart: true });
+                }
+            });
+        });
+
+        // Interactive click on hotspot time slot -> scroll & highlight slot in Matrix / 15m table
+        wrapper.querySelectorAll('.stats-hotspot-item').forEach(item => {
+            item.addEventListener('mouseenter', () => {
+                item.style.background = activeThemeBg;
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'rgba(128, 128, 128, 0.05)';
+            });
+            item.addEventListener('click', () => {
+                const slotTime = item.getAttribute('data-slot-time');
+                if (slotTime) this.focusTimeSlot(slotTime, activeTier);
+            });
+        });
     }
 };
 
@@ -2252,7 +2665,9 @@ const RequestsModule = {
     rawData: null,
     chart: null,
     deptChart: null,
+    retryChart: null,
     currentDeptMode: 'top6',
+    activeRetryFilter: 'all',
 
     init() {
         const maxPastDate = App.getMaxAllowedPastDate();
@@ -2342,6 +2757,7 @@ const RequestsModule = {
             const res = await fetch(`/api/v1/license/requests?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&_t=${Date.now()}`, { cache: 'no-store' });
             const data = await res.json();
             this.rawData = data;
+            this.activeRetryFilter = 'all';
             this.render();
         } catch (err) {
             console.error('RequestsModule search error:', err);
@@ -2758,56 +3174,329 @@ const RequestsModule = {
     },
 
     renderInsights() {
-        const listEl = document.getElementById('reqPeakSummaryList');
-        if (!listEl || !this.rawData) return;
+        const canvas = document.getElementById('reqRetryChart');
+        const wrapper = document.getElementById('reqRetryAnalysisWrapper');
+        const dedupBadge = document.getElementById('reqRetryDedupBadge');
+        if (!wrapper || !this.rawData) return;
 
-        const totalSessions = this.rawData.total_sessions !== undefined ? this.rawData.total_sessions : (this.rawData.total_requests || 0);
+        if (this.retryChart) {
+            this.retryChart.destroy();
+            this.retryChart = null;
+        }
+
+        const items = this.rawData.items || [];
+        const totalSessions = this.rawData.total_sessions !== undefined ? this.rawData.total_sessions : items.length;
+        const totalRequests = this.rawData.total_requests !== undefined ? this.rawData.total_requests : items.reduce((a, b) => a + (b.retry_count || 1), 0);
+
         if (!totalSessions || totalSessions === 0) {
-            listEl.innerHTML = `
-                <li>선택하신 기간에는 License 부족으로 인한 초과 요청(Denial) 이력이 없습니다 (정상 운영).</li>
-                <li>정규 근무시간(08:00~17:00) 내 거절 발생 슬롯 및 대기 인원이 모두 0건(0.0%)입니다.</li>
-            `;
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+            if (dedupBadge) {
+                dedupBadge.className = 'badge badge-green';
+                dedupBadge.textContent = '초과 대기 없음 (0.0회)';
+            }
+            wrapper.innerHTML = '<div class="text-muted text-xs p-3">조회 기간 동안 License 부족으로 인한 초과 요청 및 재시도 대기 이력이 없습니다. (정상 운영)</div>';
             return;
         }
 
-        const denialSlotRatePct = this.rawData.denial_slot_rate_pct !== undefined ? this.rawData.denial_slot_rate_pct : 0.0;
-        const denialSlotsCount = this.rawData.denial_slots_count !== undefined ? this.rawData.denial_slots_count : 0;
-        const totalWorkSlots = this.rawData.total_work_slots !== undefined ? this.rawData.total_work_slots : 0;
-        const dailyAvgSessions = this.rawData.daily_avg_sessions !== undefined ? this.rawData.daily_avg_sessions : 0.0;
-        const uniqueUsersCount = this.rawData.unique_users_count || 0;
-        const totalActiveUsers = this.rawData.total_active_users || 0;
-        const affectedUserRatePct = this.rawData.affected_user_rate_pct !== undefined ? this.rawData.affected_user_rate_pct : 0.0;
-        const avgWait = this.rawData.avg_waiters !== undefined ? this.rawData.avg_waiters : 0.0;
-        const peakWait = this.rawData.peak_waiters || 0;
-        const topDept = this.rawData.top_dept || '-';
-        const topDeptCount = this.rawData.top_dept_count || 0;
-        const topDeptPct = this.rawData.top_dept_pct || 0;
+        const ra = this.rawData.retry_analysis || {};
+        const avgRetries = ra.avg_retries_per_session !== undefined
+            ? ra.avg_retries_per_session
+            : Number((totalRequests / totalSessions).toFixed(1));
+        const dedupRate = this.rawData.dedup_rate !== undefined
+            ? this.rawData.dedup_rate
+            : (totalRequests > 0 ? Number((((totalRequests - totalSessions) / totalRequests) * 100).toFixed(1)) : 0.0);
 
-        listEl.innerHTML = `
-            <li>조회 기간 내 초과 요청(Denial) 발생 슬롯 비율은 <strong>${denialSlotRatePct}%</strong> (${denialSlotsCount}/${totalWorkSlots}개 슬롯, 일평균 <strong>${dailyAvgSessions}건</strong>)입니다.</li>
-            <li>실제 CATIA 가동 인원 <strong>${totalActiveUsers}명</strong> 중 거절 경험 인원은 <strong>${uniqueUsersCount}명</strong> (영향 비율 <strong>${affectedUserRatePct}%</strong>)입니다.</li>
-            <li>초과 발생 시 평균 동시 대기자는 <strong>+${avgWait.toFixed(1)}명</strong>, 단일 슬롯 최대 피크 대기자는 <strong>+${peakWait}명</strong>입니다.</li>
-            <li>최다 초과 요청(Denial) 발생 부서는 <strong>${Utils.escapeHtml(topDept)}</strong> (유효 부족 <strong>${topDeptCount}건</strong>, 비중 <strong>${topDeptPct}%</strong>)입니다.</li>
+        // Fallback calculation if backend retry_analysis.tiers is absent
+        let tiers = ra.tiers;
+        if (!Array.isArray(tiers) || tiers.length === 0) {
+            const singleIts = items.filter(it => (it.retry_count || 1) === 1);
+            const modIts = items.filter(it => (it.retry_count || 1) >= 2 && (it.retry_count || 1) <= 9);
+            const intIts = items.filter(it => (it.retry_count || 1) >= 10);
+            tiers = [
+                {
+                    key: 'single',
+                    label: '단발 시도 (1회)',
+                    desc: '즉시 포기 또는 단발 확인',
+                    session_count: singleIts.length,
+                    share_pct: Number(((singleIts.length / totalSessions) * 100).toFixed(1)),
+                    raw_requests: singleIts.reduce((a, b) => a + (b.retry_count || 1), 0)
+                },
+                {
+                    key: 'moderate',
+                    label: '반복 재시도 (2~9회)',
+                    desc: '단기 대기 후 재접속 시도',
+                    session_count: modIts.length,
+                    share_pct: Number(((modIts.length / totalSessions) * 100).toFixed(1)),
+                    raw_requests: modIts.reduce((a, b) => a + (b.retry_count || 1), 0)
+                },
+                {
+                    key: 'intensive',
+                    label: '집중 재시도 (10회+)',
+                    desc: '심각한 업무 병목 · 장기 대기',
+                    session_count: intIts.length,
+                    share_pct: Number(((intIts.length / totalSessions) * 100).toFixed(1)),
+                    raw_requests: intIts.reduce((a, b) => a + (b.retry_count || 1), 0)
+                }
+            ];
+        }
+
+        let maxSession = ra.max_retry_session;
+        if (!maxSession && items.length > 0) {
+            maxSession = [...items].sort((a, b) => ((b.retry_count || 1) - (a.retry_count || 1)) || ((b.duration_sec || 0) - (a.duration_sec || 0)))[0];
+        }
+
+        if (dedupBadge) {
+            if (this.activeRetryFilter !== 'all') {
+                const activeTierObj = tiers.find(t => t.key === this.activeRetryFilter);
+                dedupBadge.className = 'badge badge-warning';
+                dedupBadge.style.cursor = 'pointer';
+                dedupBadge.innerHTML = `<i class="fa-solid fa-filter-circle-xmark"></i> ${Utils.escapeHtml(activeTierObj ? activeTierObj.label : '필터')} 해제`;
+                dedupBadge.onclick = () => {
+                    this.activeRetryFilter = 'all';
+                    this.renderInsights();
+                    this.renderTable();
+                };
+            } else {
+                dedupBadge.className = 'badge badge-purple';
+                dedupBadge.style.cursor = 'default';
+                dedupBadge.onclick = null;
+                dedupBadge.textContent = `평균 ${avgRetries}회/건 · 재시도 보정 ${dedupRate}%`;
+            }
+        }
+
+        const tierColors = {
+            single: '#3b82f6',
+            moderate: '#f59e0b',
+            intensive: '#ef4444'
+        };
+
+        if (canvas) {
+            const ctx = canvas.getContext('2d');
+            this.retryChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: tiers.map(t => t.label),
+                    datasets: [{
+                        data: tiers.map(t => t.session_count),
+                        backgroundColor: tiers.map(t => tierColors[t.key] || '#64748b'),
+                        borderWidth: 1,
+                        borderColor: '#ffffff',
+                        hoverOffset: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label(context) {
+                                    const t = tiers[context.dataIndex];
+                                    if (!t) return '';
+                                    return ` ${t.label}: ${t.session_count}건 (${t.share_pct}%, 총 ${t.raw_requests}회 시도)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        const formatDur = (sec, retries) => {
+            const s = Number(sec || 0);
+            if (!retries || retries <= 1 || s <= 0) return '단발 시도';
+            if (s >= 60) {
+                const m = Math.floor(s / 60);
+                const rem = s % 60;
+                return rem > 0 ? `${m}분 ${rem}초 대기` : `${m}분 대기`;
+            }
+            return `${s}초 대기`;
+        };
+
+        const maxSummaryHtml = maxSession
+            ? `
+                <div class="req-max-retry-card" title="클릭 시 하단 상세 이력 표에서 해당 최다 재시도 세션 행으로 이동합니다.">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px;">
+                        <span style="font-weight:700; color:#ef4444;"><i class="fa-solid fa-fire-flame-curved"></i> 최다 재시도(최장 대기) 세션 <i class="fa-solid fa-arrow-turn-down" style="font-size:10px; opacity:0.75; margin-left:3px;"></i></span>
+                        <span class="font-mono" style="font-weight:700; color:#ef4444;">연속 ${maxSession.retry_count || 1}회 (${formatDur(maxSession.duration_sec, maxSession.retry_count)})</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; opacity:0.9; font-size:10.5px;">
+                        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                            <strong>[${Utils.escapeHtml(maxSession.dept_name || '-')}] ${Utils.escapeHtml(maxSession.user_name || '-')}</strong>
+                            <span class="text-muted">(${Utils.escapeHtml(maxSession.hostname || '-')})</span>
+                        </span>
+                        <span class="font-mono text-muted" style="flex-shrink:0; margin-left:6px;">${Utils.escapeHtml(maxSession.date || '')} ${Utils.escapeHtml(maxSession.request_time || '')}</span>
+                    </div>
+                </div>
+            `
+            : '';
+
+        wrapper.innerHTML = `
+            <div style="display:flex; flex-direction:column; height:100%; gap:6px;">
+                <ul style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px;">
+                    ${tiers.map((t, idx) => {
+                        const color = tierColors[t.key] || '#64748b';
+                        const isActive = this.activeRetryFilter === t.key;
+                        const activeStyle = isActive
+                            ? `background:rgba(168,85,247,0.14); border:1px solid ${color}; font-weight:600;`
+                            : `background:rgba(128,128,128,0.05); border:1px solid transparent;`;
+                        return `
+                            <li class="req-retry-tier-item" data-tier-key="${t.key}" data-tier-idx="${idx}" title="${Utils.escapeHtml(t.desc)} — 클릭 시 하단 표에서 '${Utils.escapeHtml(t.label)}' 이력만 필터링합니다." style="cursor:pointer; padding:4px 7px; border-radius:5px; transition:all 0.15s ease; user-select:none; ${activeStyle}">
+                                <div style="display:flex; align-items:center; justify-content:space-between; font-size:11.5px; margin-bottom:3px;">
+                                    <span style="display:flex; align-items:center; gap:6px;">
+                                        <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${color}; flex-shrink:0;"></span>
+                                        <span>${Utils.escapeHtml(t.label)}</span>
+                                    </span>
+                                    <span class="font-mono" style="font-size:11px;">
+                                        <strong>${t.session_count}건</strong> <span style="opacity:0.75; font-size:10px;">(${t.share_pct}% · ${t.raw_requests}회)</span>
+                                    </span>
+                                </div>
+                                <div style="width:100%; height:4px; background:rgba(128,128,128,0.18); border-radius:2px; overflow:hidden;">
+                                    <div style="width:${Math.min(100, Math.max(0, t.share_pct))}%; height:100%; background:${color}; border-radius:2px;"></div>
+                                </div>
+                            </li>
+                        `;
+                    }).join('')}
+                </ul>
+                ${maxSummaryHtml}
+            </div>
         `;
+
+        const tierEls = wrapper.querySelectorAll('.req-retry-tier-item');
+        tierEls.forEach(el => {
+            const tKey = el.dataset.tierKey;
+            const idx = parseInt(el.dataset.tierIdx, 10);
+
+            el.addEventListener('click', () => {
+                this.activeRetryFilter = (this.activeRetryFilter === tKey) ? 'all' : tKey;
+                this.renderInsights();
+                this.renderTable();
+            });
+
+            el.addEventListener('mouseenter', () => {
+                if (this.retryChart) {
+                    this.retryChart.setActiveElements([{ datasetIndex: 0, index: idx }]);
+                    this.retryChart.tooltip.setActiveElements([{ datasetIndex: 0, index: idx }], { x: 0, y: 0 });
+                    this.retryChart.update();
+                }
+            });
+
+            el.addEventListener('mouseleave', () => {
+                if (this.retryChart) {
+                    this.retryChart.setActiveElements([]);
+                    this.retryChart.tooltip.setActiveElements([], { x: 0, y: 0 });
+                    this.retryChart.update();
+                }
+            });
+        });
+
+        const maxCardEl = wrapper.querySelector('.req-max-retry-card');
+        if (maxCardEl && maxSession) {
+            maxCardEl.addEventListener('click', () => {
+                this.scrollToSession(maxSession);
+            });
+        }
+    },
+
+    getSessionKey(s) {
+        if (!s) return '';
+        return `${s.date || ''}|${s.request_time || ''}|${s.hostname || ''}|${s.user_name || ''}`;
+    },
+
+    scrollToSession(targetSession) {
+        if (!targetSession) return;
+        const targetKey = this.getSessionKey(targetSession);
+        if (!targetKey) return;
+
+        let tbody = document.getElementById('requestsBody');
+        if (!tbody) return;
+
+        const findTargetRow = () => {
+            const rows = tbody.querySelectorAll('tr[data-session-key]');
+            for (const tr of rows) {
+                if (tr.dataset.sessionKey === targetKey) {
+                    return tr;
+                }
+            }
+            return null;
+        };
+
+        let targetRow = findTargetRow();
+        if (!targetRow && this.activeRetryFilter !== 'all') {
+            this.activeRetryFilter = 'all';
+            this.renderInsights();
+            this.renderTable();
+            tbody = document.getElementById('requestsBody');
+            if (!tbody) return;
+            targetRow = findTargetRow();
+        }
+
+        if (!targetRow) return;
+
+        tbody.querySelectorAll('tr.req-row-highlight').forEach(tr => {
+            tr.classList.remove('req-row-highlight');
+        });
+
+        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetRow.classList.add('req-row-highlight');
+
+        if (this._highlightTimer) {
+            clearTimeout(this._highlightTimer);
+        }
+        this._highlightTimer = setTimeout(() => {
+            targetRow.classList.remove('req-row-highlight');
+        }, 2600);
     },
 
     renderTable() {
         const tbody = document.getElementById('requestsBody');
+        const countBadge = document.getElementById('requestsCountBadge');
         if (!tbody) return;
 
-        const items = this.rawData.items || [];
-        if (items.length === 0) {
+        const allItems = this.rawData.items || [];
+        if (allItems.length === 0) {
             tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">조회 기간 동안 License Pool 초과/거절(Denial) 이력이 없습니다. (License 정상 운영)</td></tr>';
             return;
         }
 
+        const items = allItems.filter(it => {
+            const r = it.retry_count || 1;
+            if (this.activeRetryFilter === 'single') return r === 1;
+            if (this.activeRetryFilter === 'moderate') return r >= 2 && r <= 9;
+            if (this.activeRetryFilter === 'intensive') return r >= 10;
+            return true;
+        });
+
+        if (countBadge && allItems.length > 0) {
+            if (this.activeRetryFilter !== 'all') {
+                countBadge.className = 'badge badge-warning';
+                countBadge.textContent = `필터 ${items.length}건 / 총 ${allItems.length}건`;
+            } else {
+                countBadge.className = 'badge badge-purple';
+                countBadge.textContent = `총 ${allItems.length}건`;
+            }
+        }
+
+        if (items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">선택하신 재시도 강도 등급에 해당하는 초과 요청 이력이 없습니다.</td></tr>';
+            return;
+        }
+
         tbody.innerHTML = items.map(it => {
-            const retryColHtml = (it.retry_count && it.retry_count > 1)
-                ? `<span class="badge badge-warning font-bold" title="5분 내 연속 ${it.retry_count}회 시도"><i class="fa-solid fa-arrows-rotate"></i> ${it.retry_count}회</span>`
-                : `<span class="badge badge-secondary font-mono">1회</span>`;
+            const rCnt = it.retry_count || 1;
+            const retryColHtml = (rCnt >= 10)
+                ? `<span class="badge badge-danger font-bold" title="5분 내 연속 ${rCnt}회 집중 시도 (10회 이상)"><i class="fa-solid fa-fire-flame-curved"></i> ${rCnt}회</span>`
+                : (rCnt > 1)
+                    ? `<span class="badge badge-warning font-bold" title="5분 내 연속 ${rCnt}회 반복 시도 (2~9회)"><i class="fa-solid fa-arrows-rotate"></i> ${rCnt}회</span>`
+                    : `<span class="badge badge-secondary font-mono">1회</span>`;
 
             return `
-            <tr>
+            <tr data-session-key="${Utils.escapeHtml(this.getSessionKey(it))}">
                 <td class="font-mono font-bold text-dark">${Utils.escapeHtml(it.date)}</td>
                 <td class="font-mono font-bold text-danger">${Utils.escapeHtml(it.request_time)}</td>
                 <td style="text-align: center;">${retryColHtml}</td>

@@ -107,216 +107,85 @@ class AnomalyService:
             # Sort chronological per host
             host_records.sort(key=lambda x: x["ts"])
 
-            # Multi-PID Process State Machine for this host
-            # Tracks all currently alive CATIA processes on this host
-            active_procs: Dict[str, Dict[str, Any]] = {}
+            # Host-level Idle Detection:
+            # Client service (HKTCATProcWatcher) directly logs IDLE_DETECTED (single or multi-idle)
+            # and IDLE_HEARTBEAT (periodic idle maintenance). Judge as idle when the current
+            # log state is IDLE_DETECTED or IDLE_HEARTBEAT.
+            idle_records: List[Dict[str, Any]] = []
             last_user = ""
             last_host = default_host
 
             for r in host_records:
                 ev_code = r["event_code"]
-                ev_desc = r["desc"]
-                ts = r["ts"]
-                pid_val = r["pid"]
-
                 if r["user"]:
                     last_user = r["user"]
                 if r["host"]:
                     last_host = r["host"]
 
-                # 1. Process Start / Service start already running
-                if ev_code == "RUN_DETECTED" or "SERVICE_START_ALREADY_RUNNING" in ev_code:
-                    if pid_val:
-                        active_procs[pid_val] = {
-                            "pid": pid_val,
-                            "status": "ACTIVE",
-                            "start_ts": ts,
-                            "idle_ts": None,
-                            "cpu": r["cpu"],
-                            "mem": r["mem"],
-                            "desc": ev_desc
-                        }
-                # 2. Watch Started (Active until idle)
-                elif ev_code == "WATCH_STARTED":
-                    if pid_val:
-                        if pid_val in active_procs:
-                            active_procs[pid_val]["cpu"] = r["cpu"]
-                            active_procs[pid_val]["mem"] = r["mem"]
-                            if not active_procs[pid_val].get("is_zombie"):
-                                active_procs[pid_val]["status"] = "ACTIVE"
-                        else:
-                            active_procs[pid_val] = {
-                                "pid": pid_val,
-                                "status": "ACTIVE",
-                                "start_ts": ts,
-                                "idle_ts": None,
-                                "cpu": r["cpu"],
-                                "mem": r["mem"],
-                                "desc": ev_desc,
-                                "is_zombie": False
-                            }
-                # 3. Watch Cancelled (User interaction detected)
-                elif ev_code == "WATCH_CANCELLED":
-                    if pid_val and pid_val in active_procs:
-                        active_procs[pid_val]["status"] = "ACTIVE"
-                        active_procs[pid_val]["idle_ts"] = None
-                        active_procs[pid_val]["is_zombie"] = False
-                # 4. Zombie Skipped (License unconsumed zombie process - excluded from idle monitoring)
-                elif (
-                    ev_code == "ZOMBIE_SKIPPED"
-                    or "ZOMBIE" in ev_code
-                    or "라이선스 미점유" in ev_desc
-                ):
-                    if pid_val:
-                        if pid_val in active_procs:
-                            active_procs[pid_val]["status"] = "ZOMBIE"
-                            active_procs[pid_val]["is_zombie"] = True
-                            active_procs[pid_val]["desc"] = ev_desc
-                            active_procs[pid_val]["cpu"] = r["cpu"]
-                            active_procs[pid_val]["mem"] = r["mem"]
-                        else:
-                            active_procs[pid_val] = {
-                                "pid": pid_val,
-                                "status": "ZOMBIE",
-                                "start_ts": ts,
-                                "idle_ts": None,
-                                "cpu": r["cpu"],
-                                "mem": r["mem"],
-                                "desc": ev_desc,
-                                "is_zombie": True
-                            }
-                # 5. Idle Detected or Idle Heartbeat (유휴 진입 및 주기적 유휴 유지)
-                elif (
+                if (
                     ev_code in ("IDLE_DETECTED", "IDLE_HEARTBEAT")
                     or "IDLE_DETECTED" in ev_code
                     or "IDLE_HEARTBEAT" in ev_code
-                    or "유휴 진입" in ev_desc
-                    or "유휴 유지" in ev_desc
-                    or "IDLE" in ev_code
                 ):
-                    if pid_val:
-                        if pid_val not in active_procs:
-                            active_procs[pid_val] = {
-                                "pid": pid_val,
-                                "status": "IDLE",
-                                "event_code": "IDLE_DETECTED",
-                                "start_ts": ts,
-                                "idle_ts": ts,
-                                "last_ts": ts,
-                                "cpu": r["cpu"],
-                                "mem": r["mem"],
-                                "desc": ev_desc,
-                                "is_zombie": False
-                            }
-                        else:
-                            if not active_procs[pid_val].get("is_zombie"):
-                                active_procs[pid_val]["status"] = "IDLE"
-                                active_procs[pid_val]["event_code"] = "IDLE_DETECTED"
-                                # 최초 유휴 진입 시점 보존 (IDLE_HEARTBEAT 반복 갱신 시에도 최초 유휴 시각 유지)
-                                if not active_procs[pid_val].get("idle_ts"):
-                                    active_procs[pid_val]["idle_ts"] = ts
-                                active_procs[pid_val]["last_ts"] = ts
-                                active_procs[pid_val]["desc"] = ev_desc
-                            active_procs[pid_val]["cpu"] = r["cpu"]
-                            active_procs[pid_val]["mem"] = r["mem"]
-                    else:
-                        for p in active_procs:
-                            if not active_procs[p].get("is_zombie"):
-                                active_procs[p]["status"] = "IDLE"
-                                active_procs[p]["event_code"] = "IDLE_DETECTED"
-                                if not active_procs[p].get("idle_ts"):
-                                    active_procs[p]["idle_ts"] = ts
-                                active_procs[p]["last_ts"] = ts
-                                active_procs[p]["desc"] = ev_desc
-                # 6. Active Detected (User resumed work on this process/host)
-                elif (
-                    ev_code == "ACTIVE_DETECTED"
-                    or "활성 감지" in ev_desc
-                    or "활성" in ev_desc
-                    or "ACTIVE" in ev_code
-                ):
-                    if pid_val and pid_val in active_procs:
-                        active_procs[pid_val]["status"] = "ACTIVE"
-                        active_procs[pid_val]["event_code"] = "ACTIVE_DETECTED"
-                        active_procs[pid_val]["idle_ts"] = None
-                        active_procs[pid_val]["is_zombie"] = False
-                        active_procs[pid_val]["cpu"] = r["cpu"]
-                        active_procs[pid_val]["mem"] = r["mem"]
-                    else:
-                        for p in active_procs:
-                            active_procs[p]["status"] = "ACTIVE"
-                            active_procs[p]["event_code"] = "ACTIVE_DETECTED"
-                            active_procs[p]["idle_ts"] = None
-                            active_procs[p]["is_zombie"] = False
-                # 7. Process Terminated (License returned)
-                elif ev_code == "TERM_DETECTED" or "종료" in ev_desc:
-                    if pid_val and pid_val in active_procs:
-                        del active_procs[pid_val]
-                    elif not pid_val:
-                        active_procs.clear()
-                # 8. System Shutdown or Service Stopped
-                elif ev_code in ("SYSTEM_SHUTDOWN", "SERVICE_STOP"):
-                    active_procs.clear()
+                    idle_records.append(r)
+                else:
+                    idle_records.clear()
 
-            # Final Evaluation for this Host:
-            # Exclude zombie processes (ZOMBIE_SKIPPED) that do not consume CATIA licenses
-            valid_procs = {
-                p: st for p, st in active_procs.items()
-                if not st.get("is_zombie") and st.get("status") != "ZOMBIE"
-            }
+            if idle_records:
+                idle_by_pid: Dict[str, Dict[str, Any]] = {}
+                for ir in idle_records:
+                    p_key = ir["pid"] or "-"
+                    idle_by_pid[p_key] = ir
 
-            # Rule:
-            # 1. len(valid_procs) > 0 (At least 1 valid license-consuming process still alive)
-            # 2. ALL alive valid processes have status == 'IDLE'
-            # 3. NONE of the alive valid processes have status == 'ACTIVE'
-            if len(valid_procs) > 0:
-                all_idle = all(st["status"] == "IDLE" for st in valid_procs.values())
-                if all_idle:
-                    pids_list = sorted(valid_procs.keys())
-                    pids_str = ", ".join(pids_list)
+                pids_list = sorted(p for p in idle_by_pid.keys() if p != "-")
+                pids_str = ", ".join(pids_list) if pids_list else "-"
 
-                    idle_timestamps = [st["idle_ts"] for st in valid_procs.values() if st.get("idle_ts")]
-                    main_ts = min(idle_timestamps) if idle_timestamps else host_records[-1]["ts"]
+                # Preserve initial IDLE_DETECTED entry timestamp across subsequent IDLE_HEARTBEAT logs
+                main_ts = idle_records[0]["ts"]
+                date_part = main_ts[:10]
+                time_part = main_ts[11:19] if len(main_ts) >= 19 else ""
 
-                    date_part = main_ts[:10]
-                    time_part = main_ts[11:19] if len(main_ts) >= 19 else ""
+                if last_host not in host_user_cache:
+                    host_user_cache[last_host] = user_master_service.get_user_info(last_host)
+                u_info = host_user_cache[last_host]
+                user_name = u_info.get("USER_NAME") or last_user or last_host
+                emp_id = u_info.get("EMP_NO") or "-"
+                dept_name = u_info.get("DEPT_NAME") or "미등록"
+                ip_addr = u_info.get("IP") or "-"
 
-                    if last_host not in host_user_cache:
-                        host_user_cache[last_host] = user_master_service.get_user_info(last_host)
-                    u_info = host_user_cache[last_host]
-                    user_name = u_info.get("USER_NAME") or last_user or last_host
-                    emp_id = u_info.get("EMP_NO") or "-"
-                    dept_name = u_info.get("DEPT_NAME") or "미등록"
-                    ip_addr = u_info.get("IP") or "-"
+                cpus = [st["cpu"] for st in idle_by_pid.values() if st.get("cpu") and st["cpu"] != "-"]
+                mems = [st["mem"] for st in idle_by_pid.values() if st.get("mem") and st["mem"] != "-"]
+                cpu_str = ", ".join(cpus) if cpus else "0.0%"
+                mem_str = ", ".join(mems) if mems else "-"
 
-                    cpus = [st["cpu"] for st in valid_procs.values() if st.get("cpu") and st["cpu"] != "-"]
-                    mems = [st["mem"] for st in valid_procs.values() if st.get("mem") and st["mem"] != "-"]
-                    cpu_str = ", ".join(cpus) if cpus else "0.0%"
-                    mem_str = ", ".join(mems) if mems else "-"
+                latest_rec = idle_records[-1]
+                latest_ev_code = latest_rec["event_code"]
+                proc_count = len(pids_list) if pids_list else 1
+                desc_text = latest_rec["desc"] or f"CATIA({proc_count}개 프로세스) 유휴 진입 방치 중"
+                status_label = (
+                    "유휴 유지 (IDLE_HEARTBEAT)"
+                    if "IDLE_HEARTBEAT" in latest_ev_code
+                    else "유휴 진입 (IDLE_DETECTED)"
+                )
 
-                    proc_count_str = f"{len(valid_procs)}개 프로세스" if len(valid_procs) > 1 else "1개 프로세스"
-
-                    desc_text = f"모든 CATIA({proc_count_str}) 유휴 진입 방치 중"
-                    status_label = "유휴 진입 (전체 PID 방치)"
-
-                    raw_events.append({
-                        "timestamp": main_ts,
-                        "date": date_part,
-                        "time": time_part,
-                        "hostname": last_host,
-                        "user_name": user_name,
-                        "emp_id": emp_id,
-                        "dept_name": dept_name,
-                        "ip": ip_addr,
-                        "event_code": "IDLE_DETECTED",
-                        "description": desc_text,
-                        "pid": pids_str,
-                        "cpu": cpu_str,
-                        "mem": mem_str,
-                        "process_count": len(valid_procs),
-                        "status_label": status_label,
-                        "action_recommend": "License 회수 권고 / 점유 상태 확인"
-                    })
+                raw_events.append({
+                    "timestamp": main_ts,
+                    "date": date_part,
+                    "time": time_part,
+                    "hostname": last_host,
+                    "user_name": user_name,
+                    "emp_id": emp_id,
+                    "dept_name": dept_name,
+                    "ip": ip_addr,
+                    "event_code": latest_ev_code,
+                    "description": desc_text,
+                    "pid": pids_str,
+                    "cpu": cpu_str,
+                    "mem": mem_str,
+                    "process_count": proc_count,
+                    "status_label": status_label,
+                    "action_recommend": "License 회수 권고 / 점유 상태 확인"
+                })
 
         # Sort chronological (Oldest at top, Newest at bottom)
         raw_events.sort(key=lambda x: x["timestamp"])

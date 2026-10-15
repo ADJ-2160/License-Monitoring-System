@@ -3266,7 +3266,43 @@ span.flatpickr-weekday {
     color: var(--text-muted);
 }
 
+/* Denial Max Retry Session Card & Row Highlight */
+.req-max-retry-card {
+    margin-top: auto;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.22);
+    font-size: 11px;
+    line-height: 1.4;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease;
+}
 
+.req-max-retry-card:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.55);
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.18);
+    transform: translateY(-1px);
+}
 
+.req-max-retry-card:active {
+    transform: translateY(0);
+}
 
+tr.req-row-highlight td {
+    animation: reqRowPulse 0.85s ease-in-out 3;
+    background: rgba(239, 68, 68, 0.22) !important;
+    border-top: 1px solid rgba(239, 68, 68, 0.55) !important;
+    border-bottom: 1px solid rgba(239, 68, 68, 0.55) !important;
+}
 
+@keyframes reqRowPulse {
+    0%, 100% {
+        background: rgba(239, 68, 68, 0.12);
+    }
+    50% {
+        background: rgba(239, 68, 68, 0.32);
+    }
+}

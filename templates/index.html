@@ -17,7 +17,7 @@
     <!-- Flatpickr CSS -->
     <link rel="stylesheet" href="/static/vendor/flatpickr.min.css">
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/style.css?v=6.2">
+    <link rel="stylesheet" href="/static/css/style.css?v=6.3">
 </head>
 <body class="sidebar-layout">
     <!-- Top Global Header Bar (Site-wide controls & title) -->
@@ -514,10 +514,18 @@
                                 </div>
                             </div>
                             <div class="stats-box">
-                                <h4><i class="fa-solid fa-clipboard-check"></i> 기간 분석 Insight</h4>
-                                <ul class="summary-list" id="peakSummaryList">
-                                    <li class="text-muted">데이터를 분석 중입니다...</li>
-                                </ul>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                                    <h4 style="margin: 0;"><i class="fa-solid fa-gauge-high"></i> 부하 구간 분포 및 상습 병목 시간대</h4>
+                                    <span id="statsLoadSpareBadge" class="badge badge-secondary" style="font-size: 0.72rem;" title="정규 근무시간(점심 제외) 기준 평균 잔여 여유 시트 및 포화 집중 시간대">분석 중...</span>
+                                </div>
+                                <div class="dept-chart-flex" style="display: flex; gap: 1rem; align-items: center; height: 210px;">
+                                    <div style="flex: 1; height: 100%; position: relative; max-width: 170px;">
+                                        <canvas id="statsLoadTierChart"></canvas>
+                                    </div>
+                                    <div class="dept-legend-wrapper" id="statsLoadAnalysisWrapper" style="flex: 1.6; height: 100%; overflow-y: auto; padding-right: 0.25rem;">
+                                        <div class="text-muted text-xs p-3">데이터를 분석 중입니다...</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -637,10 +645,18 @@
                                 </div>
                             </div>
                             <div class="stats-box">
-                                <h4><i class="fa-solid fa-clipboard-check"></i> 초과 요청 분석 Insight</h4>
-                                <ul class="summary-list" id="reqPeakSummaryList">
-                                    <li class="text-muted">데이터를 분석 중입니다...</li>
-                                </ul>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                                    <h4 style="margin: 0;"><i class="fa-solid fa-arrows-rotate"></i> 재시도 강도(체감 불편도) 및 대기 패턴</h4>
+                                    <span id="reqRetryDedupBadge" class="badge badge-secondary" style="font-size: 0.72rem;" title="총 원시 요청 시도 대비 5분 내 연속 재시도 병합 비율">평균 0.0회/건</span>
+                                </div>
+                                <div class="dept-chart-flex" style="display: flex; gap: 1rem; align-items: center; height: 210px;">
+                                    <div style="flex: 1; height: 100%; position: relative; max-width: 175px;">
+                                        <canvas id="reqRetryChart"></canvas>
+                                    </div>
+                                    <div class="dept-legend-wrapper" id="reqRetryAnalysisWrapper" style="flex: 1.55; height: 100%; overflow-y: auto; padding-right: 0.25rem;">
+                                        <div class="text-muted text-xs p-3">데이터를 분석 중입니다...</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -988,6 +1004,6 @@
     <script src="/static/vendor/flatpickr.min.js"></script>
     <script src="/static/vendor/flatpickr.ko.js"></script>
     <!-- Main JS Application -->
-    <script src="/static/js/main.js?v=5.2"></script>
+    <script src="/static/js/main.js?v=5.4"></script>
 </body>
 </html>

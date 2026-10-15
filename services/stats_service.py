@@ -288,6 +288,142 @@ class StatsService:
         total_days_count = len(daily_summary)
         days_over_60_pct_rate = round((days_over_60_pct_count / total_days_count) * 100, 1) if total_days_count > 0 else 0.0
 
+        # 부하 구간(포화/주의/안정) 분포 및 상습 병목 타임슬롯 Top 5 산출 (점심시간 12:15~12:45 제외 기준 100% 정합)
+        critical_slots_count = 0
+        warning_slots_count = 0
+        normal_slots_count = 0
+        morning_vals_all: List[int] = []
+        afternoon_vals_all: List[int] = []
+        morning_crit_count = 0
+        afternoon_crit_count = 0
+
+        for d in target_avg_dates:
+            is_cur_today = (d == latest_date_ymd)
+            for s in WORK_HOURS_SLOTS_15M:
+                if s in LUNCH_HOURS_SLOTS_15M:
+                    continue
+                if is_cur_today and s > latest_measured_slot:
+                    continue
+                val = date_time_counts[d][s]
+                if val >= CRITICAL_THRESHOLD:
+                    critical_slots_count += 1
+                elif val >= WARNING_THRESHOLD:
+                    warning_slots_count += 1
+                else:
+                    normal_slots_count += 1
+
+                if s <= "12:00":
+                    morning_vals_all.append(val)
+                    if val >= CRITICAL_THRESHOLD:
+                        morning_crit_count += 1
+                elif s >= "13:00":
+                    afternoon_vals_all.append(val)
+                    if val >= CRITICAL_THRESHOLD:
+                        afternoon_crit_count += 1
+
+        load_tiers = [
+            {
+                "key": "critical",
+                "label": f"포화·임계 ({CRITICAL_THRESHOLD}~{TOTAL_MD2_LIMIT}개)",
+                "short_label": f"포화 ({CRITICAL_THRESHOLD}+)",
+                "desc": f"여유 0~{ max(0, TOTAL_MD2_LIMIT - CRITICAL_THRESHOLD) }석 · 초과 요청 위험 구간",
+                "slot_count": critical_slots_count,
+                "hours": round(critical_slots_count * 0.25, 2),
+                "share_pct": round((critical_slots_count / period_total_slots) * 100, 1) if period_total_slots > 0 else 0.0
+            },
+            {
+                "key": "warning",
+                "label": f"고부하·주의 ({WARNING_THRESHOLD}~{CRITICAL_THRESHOLD - 1}개)",
+                "short_label": f"주의 ({WARNING_THRESHOLD}~{CRITICAL_THRESHOLD - 1})",
+                "desc": f"여유 {max(1, TOTAL_MD2_LIMIT - CRITICAL_THRESHOLD + 1)}~{max(1, TOTAL_MD2_LIMIT - WARNING_THRESHOLD)}석 · 피크 근접 구간",
+                "slot_count": warning_slots_count,
+                "hours": round(warning_slots_count * 0.25, 2),
+                "share_pct": round((warning_slots_count / period_total_slots) * 100, 1) if period_total_slots > 0 else 0.0
+            },
+            {
+                "key": "normal",
+                "label": f"안정·여유 ({WARNING_THRESHOLD - 1}개 이하)",
+                "short_label": f"안정 (≤{WARNING_THRESHOLD - 1})",
+                "desc": f"여유 {max(1, TOTAL_MD2_LIMIT - WARNING_THRESHOLD + 1)}석 이상 · 원활 운영 구간",
+                "slot_count": normal_slots_count,
+                "hours": round(normal_slots_count * 0.25, 2),
+                "share_pct": round((normal_slots_count / period_total_slots) * 100, 1) if period_total_slots > 0 else 0.0
+            }
+        ]
+
+        m_total_slots = len(morning_vals_all)
+        a_total_slots = len(afternoon_vals_all)
+        m_crit_pct = round((morning_crit_count / m_total_slots) * 100, 1) if m_total_slots > 0 else 0.0
+        a_crit_pct = round((afternoon_crit_count / a_total_slots) * 100, 1) if a_total_slots > 0 else 0.0
+        m_avg_usage = round(sum(morning_vals_all) / m_total_slots, 1) if m_total_slots > 0 else 0.0
+        a_avg_usage = round(sum(afternoon_vals_all) / a_total_slots, 1) if a_total_slots > 0 else 0.0
+
+        if a_crit_pct > m_crit_pct:
+            dominant_period = "오후 집중"
+        elif m_crit_pct > a_crit_pct:
+            dominant_period = "오전 집중"
+        elif a_avg_usage > m_avg_usage:
+            dominant_period = "오후 우세"
+        elif m_avg_usage > a_avg_usage:
+            dominant_period = "오전 우세"
+        else:
+            dominant_period = "오전·오후 균등"
+
+        slot_hotspot_candidates = []
+        for s in WORK_HOURS_SLOTS_15M:
+            if s in LUNCH_HOURS_SLOTS_15M:
+                continue
+            vals = [
+                date_time_counts[d][s]
+                for d in target_avg_dates
+                if not (d == latest_date_ymd and s > latest_measured_slot)
+            ]
+            if not vals:
+                continue
+            m_days = len(vals)
+            c_days = sum(1 for v in vals if v >= CRITICAL_THRESHOLD)
+            w_days = sum(1 for v in vals if WARNING_THRESHOLD <= v < CRITICAL_THRESHOLD)
+            n_days = sum(1 for v in vals if v < WARNING_THRESHOLD)
+            hl_days = c_days + w_days
+            s_avg = round(sum(vals) / m_days, 1)
+            s_peak = max(vals)
+            s_min = min(vals)
+            if s_peak <= 0:
+                continue
+            slot_hotspot_candidates.append({
+                "time": s,
+                "period_tag": "오전" if s <= "12:00" else "오후",
+                "measured_days": m_days,
+                "critical_days": c_days,
+                "warning_days": w_days,
+                "normal_days": n_days,
+                "high_load_days": hl_days,
+                "critical_rate_pct": round((c_days / m_days) * 100, 1),
+                "warning_rate_pct": round((w_days / m_days) * 100, 1),
+                "normal_rate_pct": round((n_days / m_days) * 100, 1),
+                "high_load_rate_pct": round((hl_days / m_days) * 100, 1),
+                "avg_usage": s_avg,
+                "peak_usage": s_peak,
+                "min_usage": s_min,
+                "spare_avg": round(max(0.0, TOTAL_MD2_LIMIT - s_avg), 1),
+                "avg_rate_pct": round((s_avg / TOTAL_MD2_LIMIT) * 100, 1)
+            })
+
+        top_critical_slots = sorted(
+            slot_hotspot_candidates,
+            key=lambda x: (-x["critical_days"], -x["high_load_days"], -x["avg_usage"], -x["peak_usage"], x["time"])
+        )[:5]
+        top_warning_slots = sorted(
+            slot_hotspot_candidates,
+            key=lambda x: (-x["warning_days"], -x["high_load_days"], -x["avg_usage"], -x["peak_usage"], x["time"])
+        )[:5]
+        top_normal_slots = sorted(
+            slot_hotspot_candidates,
+            key=lambda x: (-x["normal_days"], x["avg_usage"], x["min_usage"], x["time"])
+        )[:5]
+        hotspot_slots = top_critical_slots
+        avg_spare_seats = round(max(0.0, TOTAL_MD2_LIMIT - work_avg), 1) if work_avgs else float(TOTAL_MD2_LIMIT)
+
         unique_users_count = len(period_users_map)
         active_depts_count = len(dept_dist)
 
@@ -310,6 +446,25 @@ class StatsService:
             "hourly_summary": hourly_summary,
             "daily_summary": daily_summary,
             "dept_distribution": dept_dist,
+            "load_analysis": {
+                "total_valid_slots": period_total_slots,
+                "total_valid_hours": round(period_total_slots * 0.25, 2),
+                "avg_spare_seats": avg_spare_seats,
+                "dominant_period": dominant_period,
+                "morning_avg_usage": m_avg_usage,
+                "afternoon_avg_usage": a_avg_usage,
+                "morning_critical_pct": m_crit_pct,
+                "afternoon_critical_pct": a_crit_pct,
+                "morning_critical_slots": morning_crit_count,
+                "afternoon_critical_slots": afternoon_crit_count,
+                "tiers": load_tiers,
+                "hotspot_slots": hotspot_slots,
+                "top_slots_by_tier": {
+                    "critical": top_critical_slots,
+                    "warning": top_warning_slots,
+                    "normal": top_normal_slots
+                }
+            },
             "peak_summary": {
                 "period_max": {
                     "usage": abs_max_val,

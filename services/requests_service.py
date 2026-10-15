@@ -329,6 +329,65 @@ class RequestsService:
         top_dept_pct = round(top_dept_count / total_sess * 100, 1) if (total_sess > 0 and top_dept_count > 0) else 0.0
         date_label = f"{dates_iso[0]} ~ {dates_iso[-1]}" if is_multi_date else dates_iso[0]
 
+        # 3. Retry Intensity & Waiting Pattern Analysis
+        tier_single = [it for it in items if it.get("retry_count", 1) == 1]
+        tier_moderate = [it for it in items if 2 <= it.get("retry_count", 1) <= 9]
+        tier_intensive = [it for it in items if it.get("retry_count", 1) >= 10]
+
+        avg_retries_per_session = round(raw_count / total_sess, 1) if total_sess > 0 else 0.0
+        max_retry_it = max(items, key=lambda x: (x.get("retry_count", 1), x.get("duration_sec", 0)), default=None)
+        max_dur_it = max(items, key=lambda x: (x.get("duration_sec", 0), x.get("retry_count", 1)), default=None)
+
+        retry_analysis = {
+            "avg_retries_per_session": avg_retries_per_session,
+            "tiers": [
+                {
+                    "key": "single",
+                    "label": "단발 시도 (1회)",
+                    "desc": "즉시 포기 또는 단발 확인",
+                    "session_count": len(tier_single),
+                    "share_pct": round(len(tier_single) / total_sess * 100, 1) if total_sess > 0 else 0.0,
+                    "raw_requests": sum(it.get("retry_count", 1) for it in tier_single)
+                },
+                {
+                    "key": "moderate",
+                    "label": "반복 재시도 (2~9회)",
+                    "desc": "단기 대기 후 재접속 시도",
+                    "session_count": len(tier_moderate),
+                    "share_pct": round(len(tier_moderate) / total_sess * 100, 1) if total_sess > 0 else 0.0,
+                    "raw_requests": sum(it.get("retry_count", 1) for it in tier_moderate)
+                },
+                {
+                    "key": "intensive",
+                    "label": "집중 재시도 (10회+)",
+                    "desc": "심각한 업무 병목 · 장기 대기",
+                    "session_count": len(tier_intensive),
+                    "share_pct": round(len(tier_intensive) / total_sess * 100, 1) if total_sess > 0 else 0.0,
+                    "raw_requests": sum(it.get("retry_count", 1) for it in tier_intensive)
+                }
+            ],
+            "max_retry_session": {
+                "user_name": max_retry_it["user_name"],
+                "dept_name": max_retry_it["dept_name"],
+                "emp_no": max_retry_it.get("emp_no", "-"),
+                "hostname": max_retry_it.get("hostname", "-"),
+                "date": max_retry_it["date"],
+                "request_time": max_retry_it["request_time"],
+                "retry_count": max_retry_it.get("retry_count", 1),
+                "duration_sec": max_retry_it.get("duration_sec", 0)
+            } if max_retry_it else None,
+            "max_duration_session": {
+                "user_name": max_dur_it["user_name"],
+                "dept_name": max_dur_it["dept_name"],
+                "emp_no": max_dur_it.get("emp_no", "-"),
+                "hostname": max_dur_it.get("hostname", "-"),
+                "date": max_dur_it["date"],
+                "request_time": max_dur_it["request_time"],
+                "retry_count": max_dur_it.get("retry_count", 1),
+                "duration_sec": max_dur_it.get("duration_sec", 0)
+            } if max_dur_it else None
+        }
+
         res = {
             "status": "success",
             "is_multi_date": is_multi_date,
@@ -355,6 +414,7 @@ class RequestsService:
             "top_user": top_user,
             "dept_stats": dept_stats,
             "dept_distribution": dept_dist,
+            "retry_analysis": retry_analysis,
             "timeseries_15m": timeseries_15m,
             "notice": (
                 f"※ {date_label} 기간 동안 DSLS License 풀 초과로 인한 Denial 이력 총 {raw_count}회 시도(단기 재시도 보정 유효 부족 {total_sess}건, 영향 사용자 {len(unique_users_set)}명)가 집계되었습니다."
@@ -378,6 +438,7 @@ class RequestsService:
         host_val = first_ev["host_val"]
         d_raw = first_ev["date_raw"]
         retry_count = len(cluster)
+        duration_sec = max(0, int(last_ev.get("sec", 0)) - int(first_ev.get("sec", 0)))
 
         # 0열의 공인/게이트웨이 IP 대신 장비명(HOSTNAME) 및 USER.dat 관측 사내 IP 기준으로 마스터에서 사용자 조회
         if host_info_cache is not None and host_val in host_info_cache:
@@ -416,6 +477,7 @@ class RequestsService:
             "raw_time": first_ev["time_val"],
             "end_time": last_ev["time_val"],
             "retry_count": retry_count,
+            "duration_sec": duration_sec,
             "user_key": user_key,
             "user_name": user_name,
             "emp_no": emp_no,
