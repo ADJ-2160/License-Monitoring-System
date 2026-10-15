@@ -37,20 +37,54 @@ class UserMasterService:
         self._cache: Dict[str, Dict[str, str]] = {}
         self._sub_cache: Dict[str, Dict[str, str]] = {}
         self._emp_dir: Dict[str, Dict[str, str]] = {}
+        self._dir_name_to_emp_keys: Dict[str, set] = {}
+        self._main_emp_profiles: Dict[str, Dict[str, str]] = {}
         self._loaded_at: float = 0.0
         self._last_main_mtime: float = 0.0
         self._last_sub_mtime: float = 0.0
         self._load_emp_directory()
+
+    @staticmethod
+    def _is_valid_emp_id(emp_k: str) -> bool:
+        k_up = emp_k.strip().upper() if emp_k else ""
+        if not k_up or k_up in ["-", "미등록", "AUTOVT SERVER"]:
+            return False
+        if k_up.startswith(("OCW", "ONT", "OCL", "DESKTOP-", "MYCOM", "NBM", "SUB")):
+            return False
+        return True
+
+    def _rebuild_unique_name_index(self):
+        combined_name_keys: Dict[str, set] = {
+            k: set(v) for k, v in getattr(self, "_dir_name_to_emp_keys", {}).items()
+        }
+        for _, prof in getattr(self, "_main_emp_profiles", {}).items():
+            u_name = prof.get("USER_NAME", "").strip()
+            e_no = prof.get("EMP_NO", "").strip()
+            if u_name and self._is_valid_emp_id(e_no):
+                combined_name_keys.setdefault(u_name, set()).add(e_no)
+
+        self._emp_by_name_unique = {}
+        for name, keys in combined_name_keys.items():
+            distinct_norm_ids = {k.lower() for k in keys}
+            if len(distinct_norm_ids) == 1:
+                chosen = next(iter(keys))
+                for k in keys:
+                    if k.upper() in getattr(self, "_main_emp_profiles", {}):
+                        chosen = self._main_emp_profiles[k.upper()]["EMP_NO"]
+                        break
+                self._emp_by_name_unique[name] = chosen
 
     def _load_emp_directory(self):
         if os.path.exists(EMP_DIRECTORY_PATH):
             try:
                 with open(EMP_DIRECTORY_PATH, "r", encoding="utf-8") as f:
                     self._emp_dir = json.load(f)
-                # Build reverse lookup indexes
+                # Build reverse lookup indexes (only for actual employee ID keys, never hostnames)
                 self._emp_by_name_team = {}
-                name_to_emp_keys = {}
+                name_to_emp_keys: Dict[str, set] = {}
                 for emp_k, val in self._emp_dir.items():
+                    if not self._is_valid_emp_id(emp_k):
+                        continue
                     name = val.get("NAME", "").strip()
                     team = val.get("TEAM", "").strip()
                     if name:
@@ -58,14 +92,11 @@ class UserMasterService:
                         if team:
                             self._emp_by_name_team[(name, team)] = emp_k
 
-                self._emp_by_name_unique = {}
-                for name, keys in name_to_emp_keys.items():
-                    # Deduplicate case-insensitively (e.g. mk216008 vs MK216008)
-                    distinct_norm_ids = {k.lower() for k in keys}
-                    if len(distinct_norm_ids) == 1:
-                        self._emp_by_name_unique[name] = next(iter(keys))
+                self._dir_name_to_emp_keys = name_to_emp_keys
+                self._rebuild_unique_name_index()
             except Exception:
                 self._emp_dir = {}
+                self._dir_name_to_emp_keys = {}
                 self._emp_by_name_team = {}
                 self._emp_by_name_unique = {}
 
@@ -134,29 +165,43 @@ class UserMasterService:
                 # Only resolve dept if CSV dept_name was missing, unregistered, or broken
                 if has_broken_dept and entry.get("TEAM"):
                     resolved_dept = entry["TEAM"]
-                # If emp_no was missing, fill it from key if key is numeric or valid EM ID
-                if (not resolved_emp or resolved_emp in ["-", "미등록", ""]) and k != host.upper():
+                # If emp_no was missing, fill it from key only if key is a valid employee ID (not a hostname)
+                if (not resolved_emp or resolved_emp in ["-", "미등록", ""]) and self._is_valid_emp_id(k):
                     resolved_emp = k
                 break
 
-        # If emp_no is still missing, resolve from name + dept or unique name in directory
+        # If emp_no is still missing, resolve from name + dept or unique name across company
         if not resolved_emp or resolved_emp in ["-", "미등록", ""]:
             if (resolved_user, resolved_dept) in getattr(self, "_emp_by_name_team", {}):
                 resolved_emp = self._emp_by_name_team[(resolved_user, resolved_dept)]
             elif resolved_user in getattr(self, "_emp_by_name_unique", {}):
-                resolved_emp = self._emp_by_name_unique[resolved_user]
+                cand_emp = self._emp_by_name_unique[resolved_user]
+                cand_team = self._emp_dir.get(cand_emp, {}).get("TEAM", "").strip()
+                if (
+                    has_broken_dept
+                    or not cand_team
+                    or cand_team == resolved_dept
+                    or cand_emp.upper() in getattr(self, "_main_emp_profiles", {})
+                ):
+                    resolved_emp = cand_emp
 
         return resolved_user, resolved_emp, resolved_dept
 
     def _parse_csv_file(self, file_path: str) -> Dict[str, Dict[str, str]]:
         """
         Parses a DSLS user CSV file with automated BOM / encoding detection and delimiter parsing.
+        When parsing the main CSV (USER_MASTER_PATH), also indexes employee profiles (EMP_NO -> USER_NAME, DEPT_NAME)
+        even for rows where the hostname (컴퓨터명) column is blank.
         """
+        is_main_csv = os.path.normcase(os.path.abspath(file_path)) == os.path.normcase(os.path.abspath(USER_MASTER_PATH))
+        if is_main_csv:
+            self._main_emp_profiles = {}
+
         if not os.path.exists(file_path):
             return {}
 
         mapping: Dict[str, Dict[str, str]] = {}
-        
+
         # Detect encoding based on BOM / byte signature
         encodings_to_try = []
         try:
@@ -185,6 +230,7 @@ class UserMasterService:
         for enc in encodings_to_try:
             try:
                 temp_mapping = {}
+                temp_emp_profiles = {}
                 with open(file_path, "r", encoding=enc, errors="strict") as f:
                     first_line = f.readline()
                     if not first_line:
@@ -214,33 +260,71 @@ class UserMasterService:
 
                     for line in f:
                         parts = [p.strip().replace("\x00", "") for p in line.split(delim)]
-                        if len(parts) > max(col_user, col_dept, col_host):
+                        if len(parts) > max(col_user, col_emp, col_dept):
                             hostname = parts[col_host] if col_host < len(parts) else ""
                             user_name = parts[col_user] if col_user < len(parts) else ""
                             emp_no = parts[col_emp] if col_emp < len(parts) else ""
                             dept_name = parts[col_dept] if col_dept < len(parts) else ""
                             ip = parts[col_ip] if col_ip < len(parts) else "-"
 
-                            if not hostname or hostname in ["컴퓨터명", "호스트명", "HOSTNAME"]:
+                            if hostname in ["컴퓨터명", "호스트명", "HOSTNAME"] or emp_no in ["사용자ID", "사번", "EMP_NO", "ID"]:
                                 continue
 
+                            raw_dept = dept_name.strip() if dept_name else ""
+
+                            if not hostname:
+                                if is_main_csv and (emp_no or user_name) and raw_dept not in ["-", "미등록", ""]:
+                                    d_user = user_name if user_name else emp_no
+                                    d_user, r_emp, _ = self._resolve_emp_id(
+                                        d_user, emp_no, "", raw_dept, ip
+                                    )
+                                    if r_emp and r_emp not in ["-", "미등록", ""]:
+                                        self._emp_by_name_team[(d_user, raw_dept)] = r_emp
+                                        if r_emp.upper() not in temp_emp_profiles:
+                                            temp_emp_profiles[r_emp.upper()] = {
+                                                "USER_NAME": d_user,
+                                                "EMP_NO": r_emp,
+                                                "DEPT_NAME": raw_dept,
+                                                "PRIMARY_HOSTNAME": ""
+                                            }
+                                continue
+
+                            has_real_user = bool(
+                                (emp_no and emp_no not in ["-", "미등록", ""])
+                                or (user_name and user_name not in ["-", "미등록", "", hostname.upper(), hostname])
+                            )
                             display_user = user_name if user_name else (emp_no if emp_no else hostname)
-                            display_dept = dept_name if dept_name else "미등록"
+                            display_dept = raw_dept if raw_dept else "미등록"
 
                             # Resolve employee number to real name
                             display_user, emp_no, display_dept = self._resolve_emp_id(
                                 display_user, emp_no, hostname, display_dept, ip
                             )
 
+                            if raw_dept not in ["-", "미등록", ""] and emp_no and emp_no not in ["-", "미등록", ""]:
+                                self._emp_by_name_team[(display_user, raw_dept)] = emp_no
+
                             temp_mapping[hostname.upper()] = {
                                 "USER_NAME": display_user,
                                 "EMP_NO": emp_no if emp_no else "-",
                                 "DEPT_NAME": display_dept,
+                                "RAW_DEPT": raw_dept,
+                                "HAS_REAL_USER": has_real_user,
                                 "HOSTNAME": hostname.upper(),
                                 "IP": ip if ip else "-"
                             }
+                            if is_main_csv and emp_no and emp_no not in ["-", "미등록", ""] and raw_dept not in ["-", "미등록", ""]:
+                                temp_emp_profiles[emp_no.upper()] = {
+                                    "USER_NAME": display_user,
+                                    "EMP_NO": emp_no,
+                                    "DEPT_NAME": raw_dept,
+                                    "PRIMARY_HOSTNAME": hostname.upper()
+                                }
                 if temp_mapping:
                     mapping = temp_mapping
+                    if is_main_csv:
+                        self._main_emp_profiles = temp_emp_profiles
+                        self._rebuild_unique_name_index()
                     break
             except Exception:
                 continue
@@ -249,6 +333,7 @@ class UserMasterService:
         if not mapping:
             for enc in ["cp949", "utf-8-sig", "utf-8", "euc-kr"]:
                 try:
+                    temp_emp_profiles = {}
                     with open(file_path, "r", encoding=enc, errors="replace") as f:
                         first_line = f.readline()
                         if not first_line:
@@ -275,31 +360,69 @@ class UserMasterService:
 
                         for line in f:
                             parts = [p.strip().replace("\x00", "") for p in line.split(delim)]
-                            if len(parts) > max(col_user, col_dept, col_host):
+                            if len(parts) > max(col_user, col_emp, col_dept):
                                 hostname = parts[col_host] if col_host < len(parts) else ""
                                 user_name = parts[col_user] if col_user < len(parts) else ""
                                 emp_no = parts[col_emp] if col_emp < len(parts) else ""
                                 dept_name = parts[col_dept] if col_dept < len(parts) else ""
                                 ip = parts[col_ip] if col_ip < len(parts) else "-"
 
-                                if not hostname or hostname in ["컴퓨터명", "호스트명", "HOSTNAME"]:
+                                if hostname in ["컴퓨터명", "호스트명", "HOSTNAME"] or emp_no in ["사용자ID", "사번", "EMP_NO", "ID"]:
                                     continue
 
+                                raw_dept = dept_name.strip() if dept_name else ""
+
+                                if not hostname:
+                                    if is_main_csv and (emp_no or user_name) and raw_dept not in ["-", "미등록", ""]:
+                                        d_user = user_name if user_name else emp_no
+                                        d_user, r_emp, _ = self._resolve_emp_id(
+                                            d_user, emp_no, "", raw_dept, ip
+                                        )
+                                        if r_emp and r_emp not in ["-", "미등록", ""]:
+                                            self._emp_by_name_team[(d_user, raw_dept)] = r_emp
+                                            if r_emp.upper() not in temp_emp_profiles:
+                                                temp_emp_profiles[r_emp.upper()] = {
+                                                    "USER_NAME": d_user,
+                                                    "EMP_NO": r_emp,
+                                                    "DEPT_NAME": raw_dept,
+                                                    "PRIMARY_HOSTNAME": ""
+                                                }
+                                    continue
+
+                                has_real_user = bool(
+                                    (emp_no and emp_no not in ["-", "미등록", ""])
+                                    or (user_name and user_name not in ["-", "미등록", "", hostname.upper(), hostname])
+                                )
                                 display_user = user_name if user_name else (emp_no if emp_no else hostname)
-                                display_dept = dept_name if dept_name else "미등록"
+                                display_dept = raw_dept if raw_dept else "미등록"
 
                                 display_user, emp_no, display_dept = self._resolve_emp_id(
                                     display_user, emp_no, hostname, display_dept, ip
                                 )
 
+                                if raw_dept not in ["-", "미등록", ""] and emp_no and emp_no not in ["-", "미등록", ""]:
+                                    self._emp_by_name_team[(display_user, raw_dept)] = emp_no
+
                                 mapping[hostname.upper()] = {
                                     "USER_NAME": display_user,
                                     "EMP_NO": emp_no if emp_no else "-",
                                     "DEPT_NAME": display_dept,
+                                    "RAW_DEPT": raw_dept,
+                                    "HAS_REAL_USER": has_real_user,
                                     "HOSTNAME": hostname.upper(),
                                     "IP": ip if ip else "-"
                                 }
+                                if is_main_csv and emp_no and emp_no not in ["-", "미등록", ""] and raw_dept not in ["-", "미등록", ""]:
+                                    temp_emp_profiles[emp_no.upper()] = {
+                                        "USER_NAME": display_user,
+                                        "EMP_NO": emp_no,
+                                        "DEPT_NAME": raw_dept,
+                                        "PRIMARY_HOSTNAME": hostname.upper()
+                                    }
                     if mapping:
+                        if is_main_csv:
+                            self._main_emp_profiles = temp_emp_profiles
+                            self._rebuild_unique_name_index()
                         break
                 except Exception:
                     continue
@@ -432,13 +555,25 @@ class UserMasterService:
 
             if has_main and has_sub:
                 # Same equipment in both Main and Sub:
-                # Main is authoritative for department, sub supplements missing details.
+                # Main is authoritative for department when assigned to a real user;
+                # if Main row is an unassigned PC placeholder and Sub has an assigned user, use Sub's dept.
                 m_item = main_mapping[host_upper]
                 s_item = sub_records[host_upper]
 
                 u_name = m_item.get("USER_NAME") if m_item.get("USER_NAME") not in ["-", "미등록", host_upper, ""] else s_item.get("USER_NAME", host_upper)
                 e_no = m_item.get("EMP_NO") if m_item.get("EMP_NO") not in ["-", "미등록", "", None] else s_item.get("EMP_NO", "-")
-                d_name = m_item.get("DEPT_NAME") if m_item.get("DEPT_NAME") not in ["-", "미등록", "", None] else s_item.get("DEPT_NAME", "미등록")
+                m_raw_dept = m_item.get("RAW_DEPT", "")
+                s_raw_dept = s_item.get("RAW_DEPT") or s_item.get("DEPT_NAME", "")
+                m_has_user = m_item.get("HAS_REAL_USER", True)
+                s_has_user = s_item.get("HAS_REAL_USER", True)
+                if m_raw_dept not in ["-", "미등록", "", None] and (m_has_user or not s_has_user):
+                    d_name = m_raw_dept
+                elif s_raw_dept not in ["-", "미등록", "", None]:
+                    d_name = s_raw_dept
+                elif m_raw_dept not in ["-", "미등록", "", None]:
+                    d_name = m_raw_dept
+                else:
+                    d_name = m_item.get("DEPT_NAME") if m_item.get("DEPT_NAME") not in ["-", "미등록", "", None] else s_item.get("DEPT_NAME", "미등록")
                 ip_val = s_item.get("IP") if s_item.get("IP") not in ["-", "미등록", ""] else m_item.get("IP", "-")
 
                 # If still missing name / dept / emp_no, resolve from emp_directory
@@ -535,59 +670,109 @@ class UserMasterService:
             }
 
         # Step 3.5: Unify department and user name across multiple hosts owned by the same employee (EMP_NO).
-        # Main CSV (HKT_DSLS_USER_LIST.csv) is authoritative for the employee's current official department,
-        # preventing an employee with both a new Main PC and a legacy Sub PC from splitting into two departments.
-        shared_emp_ids = {"-", "미등록", "", "AutoVT Server", "7931", "4758", "57031677"}
+        # Strict Priority Hierarchy:
+        # 1) Main CSV (HKT_DSLS_USER_LIST.csv) — all rows with a non-empty 소속그룹, including rows without a hostname
+        # 2) Sub CSV (HKT_DSLS_USER_LIST_SUB.csv / equipment_override.json) — if Main CSV has no 소속그룹 for EMP_NO
+        # 3) Employee Directory (conf/emp_directory.json) — fallback ONLY when DEPT_NAME is missing ("-", "미등록", "")
+        shared_emp_ids = {"-", "미등록", "", "AUTOVT SERVER", "7931", "4758", "57031677"}
         auth_emp_profile: Dict[str, Dict[str, str]] = {}
+
+        # Priority 1A: Main CSV employee profiles (including hostless rows)
+        for e_no_key, p_info in self._main_emp_profiles.items():
+            e_upper = e_no_key.upper()
+            d_name = str(p_info.get("DEPT_NAME", "미등록")).strip()
+            u_name = str(p_info.get("USER_NAME", "")).strip()
+            p_host = str(p_info.get("PRIMARY_HOSTNAME", "")).strip()
+            if (
+                e_upper not in shared_emp_ids
+                and not e_upper.startswith("SUB")
+                and d_name not in ["-", "미등록", ""]
+            ):
+                auth_emp_profile[e_upper] = {
+                    "DEPT_NAME": d_name,
+                    "USER_NAME": u_name,
+                    "PRIMARY_HOSTNAME": p_host
+                }
+
+        # Priority 1B: Main CSV host records with explicit RAW_DEPT and an assigned real user
         for h_key in sorted(main_mapping.keys()):
             if h_key in AUTOVT_HOSTS:
                 continue
+            if not main_mapping[h_key].get("HAS_REAL_USER", True):
+                continue
+            m_raw_dept = str(main_mapping[h_key].get("RAW_DEPT", "")).strip()
+            if m_raw_dept in ["-", "미등록", ""]:
+                continue
             u_info = unified_mapping.get(h_key) or main_mapping[h_key]
-            e_no = str(u_info.get("EMP_NO", "-")).strip()
-            d_name = str(u_info.get("DEPT_NAME", "미등록")).strip()
+            e_upper = str(u_info.get("EMP_NO", "-")).strip().upper()
             u_name = str(u_info.get("USER_NAME", "")).strip()
             if (
-                e_no not in shared_emp_ids
-                and not e_no.startswith("Sub")
-                and d_name not in ["-", "미등록", ""]
+                e_upper not in shared_emp_ids
+                and not e_upper.startswith("SUB")
             ):
-                auth_emp_profile[e_no] = {
-                    "DEPT_NAME": d_name,
+                auth_emp_profile[e_upper] = {
+                    "DEPT_NAME": m_raw_dept,
                     "USER_NAME": u_name,
                     "PRIMARY_HOSTNAME": h_key
                 }
 
-        for h_key in sorted(unified_mapping.keys()):
+        # Priority 2: Sub CSV host records (only when Main CSV had no 소속그룹 for this EMP_NO)
+        for h_key in sorted(sub_records.keys()):
+            if h_key in AUTOVT_HOSTS:
+                continue
+            s_item = sub_records[h_key]
+            s_raw_dept = str(s_item.get("RAW_DEPT") or s_item.get("DEPT_NAME", "")).strip()
+            if s_raw_dept in ["-", "미등록", ""]:
+                continue
+            u_info = unified_mapping.get(h_key) or s_item
+            e_upper = str(u_info.get("EMP_NO", "-")).strip().upper()
+            u_name = str(u_info.get("USER_NAME", "")).strip()
+            if (
+                e_upper not in shared_emp_ids
+                and not e_upper.startswith("SUB")
+                and e_upper not in auth_emp_profile
+            ):
+                auth_emp_profile[e_upper] = {
+                    "DEPT_NAME": s_raw_dept,
+                    "USER_NAME": u_name,
+                    "PRIMARY_HOSTNAME": h_key
+                }
+
+        for h_key in sorted(unified_mapping.keys(), reverse=True):
             if h_key in AUTOVT_HOSTS:
                 continue
             h_info = unified_mapping[h_key]
             e_no = str(h_info.get("EMP_NO", "-")).strip()
-            if e_no in shared_emp_ids or e_no.startswith("Sub"):
+            e_upper = e_no.upper()
+            if e_upper in shared_emp_ids or e_upper.startswith("SUB"):
                 continue
-            if e_no in auth_emp_profile:
-                auth = auth_emp_profile[e_no]
+            if e_upper in auth_emp_profile:
+                auth = auth_emp_profile[e_upper]
                 h_info["DEPT_NAME"] = auth["DEPT_NAME"]
                 if auth.get("USER_NAME") and auth["USER_NAME"] not in ["-", "미등록", ""]:
                     h_info["USER_NAME"] = auth["USER_NAME"]
                 if auth.get("PRIMARY_HOSTNAME"):
                     h_info["PRIMARY_HOSTNAME"] = auth["PRIMARY_HOSTNAME"]
-            elif e_no in self._emp_dir:
-                dir_team = self._emp_dir[e_no].get("TEAM", "").strip()
-                if dir_team and dir_team not in ["-", "미등록", ""]:
-                    auth_emp_profile[e_no] = {
-                        "DEPT_NAME": dir_team,
-                        "USER_NAME": h_info.get("USER_NAME", ""),
-                        "PRIMARY_HOSTNAME": h_key
-                    }
-                    h_info["DEPT_NAME"] = dir_team
+                else:
+                    auth["PRIMARY_HOSTNAME"] = h_key
+                    h_info["PRIMARY_HOSTNAME"] = h_key
             else:
                 cur_dept = str(h_info.get("DEPT_NAME", "미등록")).strip()
                 if cur_dept not in ["-", "미등록", ""]:
-                    auth_emp_profile[e_no] = {
+                    auth_emp_profile[e_upper] = {
                         "DEPT_NAME": cur_dept,
                         "USER_NAME": h_info.get("USER_NAME", ""),
                         "PRIMARY_HOSTNAME": h_key
                     }
+                elif e_upper in self._emp_dir:
+                    dir_team = self._emp_dir[e_upper].get("TEAM", "").strip()
+                    if dir_team and dir_team not in ["-", "미등록", ""]:
+                        auth_emp_profile[e_upper] = {
+                            "DEPT_NAME": dir_team,
+                            "USER_NAME": h_info.get("USER_NAME", ""),
+                            "PRIMARY_HOSTNAME": h_key
+                        }
+                        h_info["DEPT_NAME"] = dir_team
 
         # Step 4: Enrich missing / unregistered IPs with recently observed intranet IPs from license logs
         try:
