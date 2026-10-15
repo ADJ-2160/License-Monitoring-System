@@ -2424,7 +2424,6 @@ const RequestsModule = {
         const ctx = canvas.getContext('2d');
         const series = this.rawData.timeseries_15m || [];
         const labels = series.map(d => d.time);
-        const denialData = series.map(d => d.denial_count);
         const waiterData = series.map(d => d.unique_users);
 
         if (this.chart) {
@@ -2432,38 +2431,26 @@ const RequestsModule = {
         }
 
         const maxVal = Math.max(
-            ...denialData.filter(v => v !== null && !isNaN(v)),
             ...waiterData.filter(v => v !== null && !isNaN(v)),
             4
         );
         const yMax = Math.ceil(maxVal * 1.25);
 
         this.chart = new Chart(ctx, {
-            type: 'bar',
+            type: 'line',
             data: {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Denial 발생 건수 (건)',
-                        data: denialData,
-                        backgroundColor: 'rgba(239, 68, 68, 0.65)',
-                        borderColor: '#ef4444',
-                        borderWidth: 1,
-                        borderRadius: 3,
-                        order: 2
-                    },
-                    {
                         label: this.rawData.is_multi_date ? '피크 동시 대기 (명)' : '동시 대기 인원 (명)',
                         data: waiterData,
-                        type: 'line',
                         borderColor: '#a855f7',
                         backgroundColor: 'rgba(168, 85, 247, 0.15)',
                         borderWidth: 2,
                         pointRadius: 2.5,
                         pointBackgroundColor: '#a855f7',
                         tension: 0,
-                        fill: false,
-                        order: 1
+                        fill: true
                     }
                 ]
             },
@@ -2483,9 +2470,9 @@ const RequestsModule = {
                                 const item = series[idx];
                                 if (!item) return '';
                                 if (this.rawData.is_multi_date) {
-                                    return `15분 슬롯: ${item.time}\n기간 합계 Denial: ${item.denial_count}건\n동시 대기 피크: ${item.unique_users}명 (발생 시 평균: ${item.avg_waiters || item.unique_users}명)\n재시도 포함 총시도: ${item.raw_requests}회`;
+                                    return `15분 슬롯: ${item.time}\n동시 대기 피크: ${item.unique_users}명 (발생 시 평균: ${item.avg_waiters || item.unique_users}명)`;
                                 }
-                                return `15분 슬롯: ${item.time}\nDenial 건수: ${item.denial_count}건\n재시도 포함 총시도: ${item.raw_requests}회\n동시 대기자: ${item.unique_users}명`;
+                                return `15분 슬롯: ${item.time}\n동시 대기 인원: ${item.unique_users}명`;
                             }
                         }
                     }
