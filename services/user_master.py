@@ -830,7 +830,13 @@ class UserMasterService:
                             h, ip = parts[2].split("/", 1)
                             h = h.strip().upper()
                             ip = ip.strip()
-                            if h and ip and ip not in ["-", "미등록", ""]:
+                            if (
+                                h
+                                and ip
+                                and h not in ["HOST", "HOSTNAME"]
+                                and not h.startswith("TEST-HOST-")
+                                and ip.upper() not in ["-", "미등록", "", "IP"]
+                            ):
                                 observed[h] = ip
             except Exception:
                 continue

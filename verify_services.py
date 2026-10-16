@@ -125,12 +125,14 @@ def run_phase2_golden_simulation() -> bool:
 
     orig_lic_log_dir = cfg.LIC_LOG_DIR
     orig_user_master = cfg.USER_MASTER_PATH
+    orig_observed_ips_cache = cfg.OBSERVED_IPS_CACHE_PATH
 
     tmp_dir = tempfile.mkdtemp(prefix="cop_golden_test_")
     try:
         log_file = os.path.join(tmp_dir, "2026_USER.dat")
         user_csv = os.path.join(tmp_dir, "HKT_DSLS_USER_LIST.csv")
         srv_log_16 = os.path.join(tmp_dir, "20260316_ServerLog.dat")
+        tmp_observed_cache = os.path.join(tmp_dir, "observed_ips_cache.json")
 
         # 1. Generate User Master CSV (60 users)
         with open(user_csv, "w", encoding="utf-8-sig") as f:
@@ -179,8 +181,10 @@ def run_phase2_golden_simulation() -> bool:
         # Monkeypatch paths across all service namespaces
         cfg.LIC_LOG_DIR = tmp_dir
         cfg.USER_MASTER_PATH = user_csv
+        cfg.OBSERVED_IPS_CACHE_PATH = tmp_observed_cache
         lp.LIC_LOG_DIR = tmp_dir
         um.USER_MASTER_PATH = user_csv
+        um.OBSERVED_IPS_CACHE_PATH = tmp_observed_cache
         rs.LIC_LOG_DIR = tmp_dir
 
         # Invalidate internal service caches
@@ -250,8 +254,10 @@ def run_phase2_golden_simulation() -> bool:
         # Restore original paths
         cfg.LIC_LOG_DIR = orig_lic_log_dir
         cfg.USER_MASTER_PATH = orig_user_master
+        cfg.OBSERVED_IPS_CACHE_PATH = orig_observed_ips_cache
         lp.LIC_LOG_DIR = orig_lic_log_dir
         um.USER_MASTER_PATH = orig_user_master
+        um.OBSERVED_IPS_CACHE_PATH = orig_observed_ips_cache
         rs.LIC_LOG_DIR = orig_lic_log_dir
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
